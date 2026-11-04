@@ -2,7 +2,11 @@
 
 Carteira unificada de investimentos: calcula o aporte mensal (percentual do salário), divide o aporte entre as classes de ativos segundo uma alocação-alvo editável, consolida os ativos de vários bancos e guarda o histórico da carteira.
 
-O escopo completo está em [docs/PRD.md](docs/PRD.md) e o desenho das tabelas em [docs/MODELO-DE-DADOS.md](docs/MODELO-DE-DADOS.md).
+A documentação de produto (PRD, modelo de dados e referência de UX/UI) ainda não está publicada neste repositório.
+
+## Aviso
+
+O Investment Lab é uma ferramenta de organização e cálculo de uso pessoal. Não é recomendação de investimento nem consultoria: a alocação-alvo é definida por você, e os valores são os que você digita. Projeções e simulações são hipóteses (taxa única, sem imposto nem custos), não promessa de resultado. O app não calcula imposto de renda. Os índices de comparação (CDI e Ibovespa) vêm de fontes públicas (Banco Central e B3) e podem ficar indisponíveis ou mudar.
 
 ## Estado atual (Fase 1, MVP)
 
@@ -28,7 +32,7 @@ Dê dois cliques em **[demonstracao.bat](demonstracao.bat)** para ver o app com 
 
 ### Telas
 
-Visual e navegação seguem [design/investment-lab-ux-ui.md](design/investment-lab-ux-ui.md): tema escuro (carvão e dourado) ou claro (marfim), botão do olho para ocultar valores, menu lateral (Visão geral, Aporte do mês, Carteira, Histórico, Trajetória, Metas) e **Configurações** (categorias, planos, reserva, preferências, CDI/Selic, backup). Os endereços antigos (`/portfolio`, `/history`, `/trajectory`, `/allocation`) redirecionam.
+Visual e navegação: tema escuro (carvão e dourado) ou claro (marfim), botão do olho para ocultar valores, menu lateral (Visão geral, Aporte do mês, Carteira, Histórico, Trajetória, Metas) e **Configurações** (categorias, planos, reserva, preferências, CDI/Selic, backup). Os endereços antigos (`/portfolio`, `/history`, `/trajectory`, `/allocation`) redirecionam.
 
 ## Como rodar
 
@@ -98,3 +102,7 @@ basic-memory tool search-notes "reserva de emergência" --project main --local
 ```
 
 As notas guardam só estrutura e decisões, nunca os seus valores financeiros.
+
+## Licença
+
+Distribuído sob a licença MIT. Veja o arquivo [LICENSE](LICENSE). O software é fornecido "como está", sem garantias de qualquer tipo.
