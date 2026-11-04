@@ -1,0 +1,165 @@
+{
+  "as_of": "2026-10-17",
+  "tracking_since": "2026-08-31",
+  "total": {
+    "earned_cents": 8500,
+    "before_tracking_cents": 0,
+    "since_tracking_cents": 8500,
+    "uncredited_proventos_cents": 0
+  },
+  "current_month": {
+    "month": "2026-10",
+    "earned_cents": 0,
+    "appreciation_cents": 0,
+    "proventos_cents": 0,
+    "partial": true,
+    "through": "2026-10-17",
+    "has_update": false,
+    "salary_share_bps": 0,
+    "measured_through": null,
+    "per_day_cents": null,
+    "work_minutes": null
+  },
+  "last_complete_month": {
+    "month": "2026-09",
+    "earned_cents": 8500,
+    "appreciation_cents": 8500,
+    "proventos_cents": 0,
+    "partial": false,
+    "through": "2026-09-30",
+    "has_update": true,
+    "salary_share_bps": 170,
+    "measured_through": "2026-09-30",
+    "per_day_cents": 283,
+    "work_minutes": 224
+  },
+  "pace": {
+    "per_day_cents": 283,
+    "basis_months": 1,
+    "from_month": "2026-09",
+    "to_month": "2026-09"
+  },
+  "salary": {
+    "salary_cents": 500000,
+    "month": "2026-10"
+  },
+  "vs_salary": {
+    "month": "2026-09",
+    "earned_cents": 8500,
+    "share_bps": 170,
+    "work_minutes": 224
+  },
+  "months": [
+    {
+      "month": "2026-08",
+      "earned_cents": 0,
+      "appreciation_cents": 0,
+      "proventos_cents": 0,
+      "partial": false,
+      "through": "2026-08-31",
+      "has_update": false,
+      "salary_share_bps": 0,
+      "measured_through": null,
+      "per_day_cents": null,
+      "work_minutes": null
+    },
+    {
+      "month": "2026-09",
+      "earned_cents": 8500,
+      "appreciation_cents": 8500,
+      "proventos_cents": 0,
+      "partial": false,
+      "through": "2026-09-30",
+      "has_update": true,
+      "salary_share_bps": 170,
+      "measured_through": "2026-09-30",
+      "per_day_cents": 283,
+      "work_minutes": 224
+    },
+    {
+      "month": "2026-10",
+      "earned_cents": 0,
+      "appreciation_cents": 0,
+      "proventos_cents": 0,
+      "partial": true,
+      "through": "2026-10-17",
+      "has_update": false,
+      "salary_share_bps": 0,
+      "measured_through": null,
+      "per_day_cents": null,
+      "work_minutes": null
+    }
+  ],
+  "milestones": [
+    {
+      "key": "first_salary",
+      "kind": "first",
+      "threshold": null,
+      "achieved_month": "2026-09"
+    },
+    {
+      "key": "share_1",
+      "kind": "monthly_share",
+      "threshold": 100,
+      "achieved_month": "2026-09"
+    },
+    {
+      "key": "share_5",
+      "kind": "monthly_share",
+      "threshold": 500,
+      "achieved_month": null
+    },
+    {
+      "key": "share_10",
+      "kind": "monthly_share",
+      "threshold": 1000,
+      "achieved_month": null
+    },
+    {
+      "key": "share_25",
+      "kind": "monthly_share",
+      "threshold": 2500,
+      "achieved_month": null
+    },
+    {
+      "key": "share_50",
+      "kind": "monthly_share",
+      "threshold": 5000,
+      "achieved_month": null
+    },
+    {
+      "key": "share_100",
+      "kind": "monthly_share",
+      "threshold": 10000,
+      "achieved_month": null
+    },
+    {
+      "key": "total_100",
+      "kind": "total_amount",
+      "threshold": 10000,
+      "achieved_month": null
+    },
+    {
+      "key": "total_1000",
+      "kind": "total_amount",
+      "threshold": 100000,
+      "achieved_month": null
+    },
+    {
+      "key": "total_10000",
+      "kind": "total_amount",
+      "threshold": 1000000,
+      "achieved_month": null
+    },
+    {
+      "key": "total_100000",
+      "kind": "total_amount",
+      "threshold": 10000000,
+      "achieved_month": null
+    }
+  ],
+  "next_milestone": {
+    "key": "share_5",
+    "progress_bps": 3400
+  }
+}

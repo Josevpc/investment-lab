@@ -1,0 +1,74 @@
+# ============================================================================
+# DADOS FINANCEIROS PESSOAIS: nunca vão para o repositório público.
+# ============================================================================
+# Tudo em data/ fica de fora (banco real, backups automáticos, banco de
+# demonstração), menos o .gitkeep que mantém a pasta.
+data/*
+!data/.gitkeep
+
+# Qualquer banco SQLite, onde quer que esteja (cópias de teste, "antes de migrar"...)
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.sqlite3-*
+
+# Exportações de backup (Configurações → Dados e proteção): o JSON tem a carteira inteira
+investment-lab-backup-*.json
+backup*.json
+
+# Capturas de tela tiradas do app (podem mostrar valores reais)
+capturas/
+screenshots/
+
+# ============================================================================
+# Segredos e ambiente
+# ============================================================================
+.env
+.env.*
+!.env.example
+frontend/.env.local
+frontend/.env.*.local
+*.pem
+*.key
+
+# ============================================================================
+# Configuração local do Claude Code e de editores
+# ============================================================================
+.claude/settings.local.json
+.claude/worktrees/
+CLAUDE.local.md
+.vscode/
+.idea/
+
+# ============================================================================
+# Gerado por ferramentas
+# ============================================================================
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+coverage/
+npm-debug.log*
+
+# Sistema operacional e logs
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+
+# Docs
+docs/
+design/

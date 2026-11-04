@@ -1,0 +1,29 @@
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PY=\"${CLAUDE_PROJECT_DIR}/backend/.venv/Scripts/python.exe\"; [ -x \"$PY\" ] || PY=python; \"$PY\" -I \"${CLAUDE_PROJECT_DIR}/.claude/hooks/guard_real_database.py\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PY=\"${CLAUDE_PROJECT_DIR}/backend/.venv/Scripts/python.exe\"; [ -x \"$PY\" ] || PY=python; \"$PY\" -I \"${CLAUDE_PROJECT_DIR}/.claude/hooks/after_python_edit.py\""
+          }
+        ]
+      }
+    ]
+  }
+}

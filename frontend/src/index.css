@@ -1,0 +1,259 @@
+@import "tailwindcss";
+
+/* O tema é escolhido pela classe `dark` no <html> (ver index.html e shared/lib/preferences.tsx). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Tokens "Solo": superfícies por tom (não por borda), tinta como ação principal, mel só para meta e foco.
+ * Cada token troca de valor com o tema, então as classes (bg-card, text-ink-2...) não precisam de `dark:`.
+ * No claro, jade, gold, clay e ink-3 como TEXTO passam de 4,5:1 sobre card, soil, raise, ground e os fundos -t
+ * (conferido por cálculo de contraste; ao mexer nesses tons, refaça a conta).
+ */
+:root {
+  --ground: #f3eee4; /* fundo da página */
+  --soil: #eae3d5; /* menu lateral e zonas */
+  --card: #fbf8f1;
+  --raise: #f0eadc; /* campos, trilhos e áreas internas */
+  --ink: #2b2620; /* texto e ação principal */
+  --ink-2: #554e43;
+  --ink-3: #665e51;
+  --jade: #296f4f; /* positivo */
+  --jade-t: #e2eedf;
+  --gold: #7a5c19; /* mel: só meta e foco */
+  --gold-t: #f1e7cb;
+  --clay: #a34730; /* atenção e destrutivo */
+  --clay-t: #f4e0d6;
+  --elev: 0 1px 2px rgba(70, 50, 20, 0.05), 0 20px 40px -22px rgba(70, 50, 20, 0.13);
+  --scrim: rgb(43 38 32 / 0.45);
+
+  --chart-axis: #665e51;
+  --chart-grid: rgb(111 103 90 / 0.22);
+  --chart-gold: #7a5c19;
+  --chart-muted: #8a8272;
+  --tooltip-bg: #fbf8f1;
+  --tooltip-fg: #2b2620;
+  --tooltip-shadow: 0 2px 4px rgba(70, 50, 20, 0.08), 0 12px 28px -8px rgba(70, 50, 20, 0.28);
+}
+
+.dark {
+  --ground: #171411;
+  --soil: #1e1a16;
+  --card: #231e1a;
+  --raise: #2d2721;
+  --ink: #f1ebdf;
+  --ink-2: #c9bfae;
+  --ink-3: #a39984;
+  --jade: #7cc9a3;
+  --jade-t: #24322a;
+  --gold: #d9b25e;
+  --gold-t: #372e1d;
+  --clay: #e58e74;
+  --clay-t: #3a2621;
+  --elev: 0 0 #0000; /* no escuro só o tom separa as camadas */
+  --scrim: rgb(0 0 0 / 0.55);
+
+  --chart-axis: #a39984;
+  --chart-grid: rgb(163 153 132 / 0.2);
+  --chart-gold: #d9b25e;
+  --chart-muted: #8a8272;
+  --tooltip-bg: #2d2721;
+  --tooltip-fg: #f1ebdf;
+  --tooltip-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.6); /* no escuro o tom do fundo da dica já a separa; a sombra só a destaca */
+}
+
+/* Categorias dos gráficos: seis tons de terra, iguais nos dois temas. Sempre aparecem com nome ou valor junto. */
+:root {
+  --chart-cat-1: #5e8a57; /* musgo */
+  --chart-cat-2: #c46f4e; /* argila */
+  --chart-cat-3: #d6a84b; /* ocre */
+  --chart-cat-4: #5b7c93; /* pedra azul */
+  --chart-cat-5: #8b5e7d; /* ameixa */
+  --chart-cat-6: #a99b80; /* areia */
+  --chart-index: #5b7c93;
+}
+
+@theme inline {
+  --color-ground: var(--ground);
+  --color-soil: var(--soil);
+  --color-card: var(--card);
+  --color-raise: var(--raise);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-jade: var(--jade);
+  --color-jade-t: var(--jade-t);
+  --color-gold: var(--gold);
+  --color-gold-t: var(--gold-t);
+  --color-clay: var(--clay);
+  --color-clay-t: var(--clay-t);
+  --shadow-soft: var(--elev);
+}
+
+@theme {
+  --font-sans: "Figtree Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Títulos e números grandes. As fontes são auto-hospedadas (@fontsource, importadas em main.tsx): sem CDN. */
+  --font-serif: "Fraunces Variable", Cambria, "Palatino Linotype", Georgia, serif;
+
+  /* Escala: destaque 52-72, página 44, seção 26, corpo 16, apoio 14, mínimo 13. */
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.4;
+  --text-display: clamp(3.25rem, 2.2rem + 4vw, 4.5rem);
+  --text-display--line-height: 1;
+  --text-title: 2.75rem;
+  --text-title--line-height: 1.1;
+  --text-section: 1.625rem;
+  --text-section--line-height: 1.2;
+
+  /* Três raios com função: cartão, campo/área interna e pílula (rounded-full). */
+  --radius-card: 28px;
+  --radius-field: 16px;
+
+  /*
+   * Transitório: as telas ainda não migradas usam a paleta antiga do Tailwind (slate, blue, emerald, red)
+   * com pares claro/escuro. Aqui ela aponta para os mesmos tons do "Solo", para conviver sem destoar.
+   * Quando todas as telas usarem os tokens acima, este bloco pode sair.
+   */
+  --color-white: #fbf8f1;
+  --color-slate-50: #f3eee4;
+  --color-slate-100: #f0eadc;
+  --color-slate-200: #e3dbcb;
+  --color-slate-300: #d2c8b4;
+  --color-slate-400: #a39984;
+  --color-slate-500: #665e51;
+  --color-slate-600: #554e43;
+  --color-slate-700: #3a332b;
+  --color-slate-800: #2d2721;
+  --color-slate-900: #251f1b;
+  --color-slate-950: #171411;
+
+  --color-blue-50: #f8f1de;
+  --color-blue-100: #f1e7cb;
+  --color-blue-200: #e6d3a1;
+  --color-blue-300: #dcc17f;
+  --color-blue-400: #d9b25e;
+  --color-blue-500: #b8923a;
+  --color-blue-600: #7a5c19;
+  --color-blue-700: #6f5518;
+  --color-blue-800: #544013;
+  --color-blue-900: #372e1d;
+  --color-blue-950: #2a2316;
+
+  --color-emerald-50: #eef5ec;
+  --color-emerald-100: #e2eedf;
+  --color-emerald-300: #a5dbc1;
+  --color-emerald-400: #7cc9a3;
+  --color-emerald-500: #4e9c78;
+  --color-emerald-600: #296f4f;
+  --color-emerald-700: #266548;
+  --color-emerald-800: #1e5039;
+  --color-emerald-900: #24322a;
+
+  --color-red-50: #faf0ea;
+  --color-red-100: #f4e0d6;
+  --color-red-300: #eda793;
+  --color-red-400: #e58e74;
+  --color-red-500: #c9694f;
+  --color-red-600: #a34730;
+  --color-red-700: #8f402b;
+  --color-red-800: #6b3020;
+  --color-red-900: #3a2621;
+  --color-red-950: #2b1a16;
+}
+
+html {
+  color-scheme: light dark;
+}
+
+body {
+  @apply bg-ground font-sans text-base text-ink antialiased;
+}
+
+/* Números alinhados em tabelas e totais. */
+.tabular {
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
+/*
+ * Títulos e números grandes: peso 400 e eixo SOFT no máximo. Fica fora das camadas de propósito, para
+ * valer também sobre `font-semibold` herdado de telas antigas: o desenho do Solo é leve.
+ */
+.font-serif {
+  font-weight: 400;
+  letter-spacing: -0.015em;
+  font-variation-settings: "SOFT" 100;
+  font-variant-numeric: lining-nums;
+}
+
+/* Foco visível e consistente: anel mel de 3px. */
+:where(a, button, input, select, textarea, summary, [role="slider"], [tabindex]):focus-visible {
+  outline: 3px solid var(--gold);
+  outline-offset: 2px;
+}
+
+/* Modo "ocultar valores": desfoca números e gráficos; nada é apagado nem recalculado. */
+html[data-privacy="hidden"] .tabular,
+html[data-privacy="hidden"] .money,
+html[data-privacy="hidden"] .recharts-wrapper {
+  filter: blur(7px);
+  user-select: none;
+  transition: filter 120ms ease;
+}
+
+/* Respeita a preferência de redução de movimento do sistema. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/*
+ * Entrada única: o cartão sobe 6px e aparece. `backwards` (e não `both`) para não deixar um `transform`
+ * ao fim, que faria o cartão virar referência de `position: fixed` dos diálogos que abrir.
+ */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rise {
+  animation: rise 240ms ease-out backwards;
+}
+
+/* Confete da comemoração: cai uma única vez; cada peça lê atraso, duração e deriva das variáveis inline. */
+@keyframes confetti-fall {
+  from {
+    transform: translate3d(0, -8vh, 0) rotate(0);
+    opacity: 1;
+  }
+  to {
+    transform: translate3d(var(--drift), 100vh, 0) rotate(var(--spin));
+    opacity: 0;
+  }
+}
+
+.confetti-piece {
+  position: absolute;
+  top: 0;
+  width: 0.5rem;
+  height: 0.9rem;
+  border-radius: 2px;
+  animation: confetti-fall var(--dur) cubic-bezier(0.2, 0.6, 0.4, 1) var(--delay) both;
+}
+
+/* Com redução de movimento, só o aviso aparece: o confete é puro enfeite. */
+@media (prefers-reduced-motion: reduce) {
+  .confetti {
+    display: none;
+  }
+}
