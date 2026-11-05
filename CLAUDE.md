@@ -43,7 +43,7 @@ backend\.venv\Scripts\python.exe -m pytest .claude/hooks -q
 ```
 
 Os testes do back-end são isolados do banco real (`tests/conftest.py`). Mantenha assim.
-Para ver a tela de verdade: suba o app com `INVESTMENT_DATABASE_URL`, `INVESTMENT_DEMO=1` e `INVESTMENT_BENCHMARKS_AUTO=0` e use `scripts/capturar-telas.mjs` para tirar capturas (veja o cabeçalho do script).
+Para ver a tela de verdade: suba o app com `INVESTMENT_DATABASE_URL`, `INVESTMENT_DEMO=1` e `INVESTMENT_BENCHMARKS_AUTO=0` e inspecione os elementos com o `playwright-cli` (skill `playwright-cli`; `snapshot` mostra papel, nome acessível e estado), em vez de ler screenshots. Nunca abra a porta 8000 (pode ser o app do usuário) nem `attach`/`--cdp`/`--extension`/`--persistent`. Use `scripts/capturar-telas.mjs` só quando o usuário pedir imagens (veja o cabeçalho do script).
 
 ## Convenções de código
 

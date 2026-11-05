@@ -1077,3 +1077,89 @@ def test_group_migration_downgrade_refuses_to_run_with_a_group_and_deletes_nothi
         assert conn.execute("select group_id from asset_class where id = 2").fetchone() == (1,)
         revision = conn.execute("select version_num from alembic_version").fetchone()[0]
     assert revision == "0016"
+
+
+# ---- 0017: aporte fora da meta -----------------------------------------------------------------
+
+
+def test_off_goal_migration_leaves_every_existing_movement_counting_in_the_goal(tmp_path):
+    db = tmp_path / "antigo.db"
+    config = alembic_config(sqlite_url(db))
+    command.upgrade(config, "0016")
+    _seed_before_initial(db)
+    with sqlite3.connect(db) as conn:
+        before = conn.execute(
+            "select id, date, kind, asset_id, amount_cents, cost_cents, initial, from_purchase "
+            "from asset_movement order by id"
+        ).fetchall()
+        valuations = conn.execute("select * from asset_valuation").fetchall()
+
+    command.upgrade(config, "0017")
+
+    with sqlite3.connect(db) as conn:
+        rows = conn.execute("select id, off_goal from asset_movement order by id").fetchall()
+        after = conn.execute(
+            "select id, date, kind, asset_id, amount_cents, cost_cents, initial, from_purchase "
+            "from asset_movement order by id"
+        ).fetchall()
+        columns = {r[1]: r for r in conn.execute("pragma table_info(asset_movement)")}
+        # Linha nova sem informar a coluna: nasce com o padrão (conta na meta).
+        conn.execute(
+            "insert into asset_movement (date, kind, asset_id, amount_cents) "
+            "values ('2026-10-10', 'aporte', 1, 900)"
+        )
+        fresh = conn.execute("select off_goal from asset_movement where id = 3").fetchone()
+        assert conn.execute("select * from asset_valuation").fetchall() == valuations
+        conn.execute("pragma foreign_keys = on")
+        assert conn.execute("pragma foreign_key_check").fetchall() == []
+    assert rows == [(1, 0), (2, 0)]
+    assert after == before  # nada além da coluna nova mudou
+    assert columns["off_goal"][3] == 1 and columns["off_goal"][4] == "0"  # NOT NULL, padrão 0
+    assert fresh == (0,)
+
+
+def test_off_goal_migration_can_run_again_without_losing_the_marks(tmp_path):
+    db = tmp_path / "antigo.db"
+    config = alembic_config(sqlite_url(db))
+    command.upgrade(config, "0017")
+    _seed_before_initial(db)
+    with sqlite3.connect(db) as conn:
+        conn.execute("update asset_movement set off_goal = 1 where id = 1")
+
+    command.stamp(config, "0016")
+    command.upgrade(config, "0017")  # a coluna já existe
+
+    with sqlite3.connect(db) as conn:
+        rows = conn.execute("select id, off_goal from asset_movement order by id").fetchall()
+    assert rows == [(1, 1), (2, 0)]
+
+
+def test_off_goal_migration_downgrade_drops_only_the_column_and_can_go_up_again(tmp_path):
+    db = tmp_path / "antigo.db"
+    config = alembic_config(sqlite_url(db))
+    command.upgrade(config, "0017")
+    _seed_before_initial(db)
+    with sqlite3.connect(db) as conn:
+        conn.execute("update asset_movement set off_goal = 1 where id = 1")
+        before = conn.execute(
+            "select id, date, kind, asset_id, amount_cents from asset_movement order by id"
+        ).fetchall()
+
+    command.downgrade(config, "0016")
+
+    with sqlite3.connect(db) as conn:
+        columns = {r[1] for r in conn.execute("pragma table_info(asset_movement)")}
+        rows = conn.execute(
+            "select id, date, kind, asset_id, amount_cents from asset_movement order by id"
+        ).fetchall()
+        revision = conn.execute("select version_num from alembic_version").fetchone()[0]
+    assert "off_goal" not in columns and {"initial", "in_balance"} <= columns
+    assert rows == before  # nenhum movimento nem valor se perde
+    assert revision == "0016"
+
+    command.upgrade(config, "0017")
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("select off_goal from asset_movement order by id").fetchall() == [
+            (0,),
+            (0,),
+        ]

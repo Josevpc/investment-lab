@@ -568,3 +568,71 @@ def test_year_without_assets_brought_in_has_no_new_assets_value(client, make_ass
 def test_year_without_a_base_has_no_new_assets_value(client, make_asset):
     make_asset(valuation_date="2026-01-31")
     assert progress(client)["year"]["new_assets_cents"] == 0
+
+
+# ---- aporte fora da meta ------------------------------------------------------------------------
+
+
+def mark_off_goal(client, off_goal=True):
+    """Marca (ou desmarca) todos os aportes lançados; devolve quantos mudaram."""
+    movements = client.get(f"{API}/movements", params={"kind": "aporte"}).json()
+    for movement in movements:
+        response = client.patch(f"{API}/movements/{movement['id']}", json={"off_goal": off_goal})
+        assert response.status_code == 200, response.text
+    return len(movements)
+
+
+def test_an_off_goal_aporte_does_not_fulfil_the_month_and_unmarking_gives_it_back(
+    client, make_asset
+):
+    asset = make_asset(invested=100_000, current=100_000, valuation_date="2026-06-30")
+    close_month(client, asset, "2026-07", "2026-07-31", 205_000)
+    close_month(client, asset, "2026-08", "2026-08-31", 310_000)
+    close_month(client, asset, "2026-09", "2026-09-30", 415_000)
+    assert progress(client)["streak"]["current"] == 3
+
+    [_, middle, _] = sorted(
+        client.get(f"{API}/movements", params={"kind": "aporte"}).json(), key=lambda m: m["date"]
+    )
+    assert (
+        client.patch(f"{API}/movements/{middle['id']}", json={"off_goal": True}).status_code == 200
+    )
+
+    streak = progress(client)["streak"]
+    assert (streak["current"], streak["best"]) == (1, 1)  # só setembro, depois do mês quebrado
+    assert states(client)["2026-08"] == "missed"
+
+    client.patch(f"{API}/movements/{middle['id']}", json={"off_goal": False})
+    assert progress(client)["streak"]["current"] == 3
+
+
+def test_pace_leaves_the_off_goal_aportes_out(client, make_asset):
+    asset = make_asset(invested=100_000, current=100_000, valuation_date="2026-05-31")
+    aporte(client, asset, "2026-07-31", 100_000)
+    response = client.post(
+        f"{API}/assets/{asset['id']}/balance",
+        json={
+            "date": "2026-09-30",
+            "balance_cents": 9_000_000,
+            "contribution_cents": 200_000,
+            "off_goal": True,
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    windows = {w["months"]: w for w in pace(client)["windows"]}
+
+    assert (windows[3]["average_cents"], windows[3]["months_with_data"]) == (100_000, 1)
+    assert (windows[12]["average_cents"], windows[12]["months_with_data"]) == (100_000, 1)
+
+
+def test_pace_suggestion_ignores_a_big_off_goal_aporte(client, make_asset):
+    asset = make_asset(invested=100_000, current=100_000, valuation_date="2026-03-31")
+    for day in ("2026-04-30", "2026-06-30", "2026-08-31"):
+        aporte(client, asset, day, 120_000)
+    save_settings(client, monthly_cents=100_000)
+    assert pace(client)["suggestion"]["suggested_cents"] == 120_000
+
+    mark_off_goal(client)
+
+    assert pace(client)["suggestion"] is None  # sem aporte na meta, nada a sugerir

@@ -132,6 +132,10 @@ class AssetMovement(Base):
     # Resgate cujo saldo digitado já veio sem o dinheiro: o valor nunca saiu do saldo por aqui, só o
     # custo saiu do investido. Vale ao desfazer, para reverter só o que foi mexido.
     in_balance: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    # Aporte "fora da meta" (só em kind="aporte"): segue sendo dinheiro aportado em tudo (investido,
+    # patrimônio, rentabilidade, caixa, saldos), mas não conta no plano do mês, na sequência de
+    # meses cumpridos nem no ritmo de aporte. É só uma marca: não mexe em saldo nem em caixa.
+    off_goal: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
 
     asset: Mapped[Asset] = relationship(foreign_keys=[asset_id], lazy="joined")
     related_asset: Mapped[Asset | None] = relationship(

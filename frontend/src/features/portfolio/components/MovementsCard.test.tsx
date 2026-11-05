@@ -33,6 +33,8 @@ const emptySummary = {
   month: "2026-10",
   by_class: [],
   reserve_cents: 0,
+  reserve_goal_cents: 0,
+  off_goal_cents: 0,
   total_cents: 0,
   proventos_cents: 0,
   redemptions_cents: 0,
@@ -198,6 +200,7 @@ const aporteMovement = {
   amount_cents: 9_000,
   cost_cents: null,
   initial: false,
+  off_goal: false,
 };
 
 describe("Movimentações: registrar provento", () => {
@@ -216,6 +219,97 @@ describe("Movimentações: registrar provento", () => {
     await user.selectOptions(screen.getByLabelText(/^Ativo que pagou/), "3");
     await user.selectOptions(credit, "2");
     expect(credit).toHaveAccessibleName(/conta uma vez só no rendimento/);
+  });
+});
+
+describe("Movimentações: fora da meta do mês", () => {
+  const nb = (text: string | null) => (text ?? "").replace(/ /g, " ");
+
+  it("o formulário traz a caixa desmarcada, com a explicação ligada a ela", async () => {
+    const user = userEvent.setup();
+    const calls = mockApi();
+    renderCard();
+    await openForm(user);
+
+    const box = screen.getByRole("checkbox", { name: "Fora da meta do mês" });
+    expect(box).not.toBeChecked();
+    expect(box).toHaveAccessibleDescription(/não no plano do mês, na sequência nem no ritmo de aporte/);
+
+    await user.selectOptions(screen.getByLabelText("Ativo"), "2");
+    await user.type(screen.getByLabelText("Valor do aporte (R$)"), "90");
+    await user.click(screen.getAllByRole("button", { name: "Registrar aporte" }).at(-1)!);
+    await waitFor(() => expect(calls.some((c) => c.init?.method === "POST")).toBe(true));
+    expect(JSON.parse(String(calls.find((c) => c.init?.method === "POST")!.init!.body))).not.toHaveProperty("off_goal");
+  });
+
+  it("marcada, envia off_goal com o aporte", async () => {
+    const user = userEvent.setup();
+    const calls = mockApi();
+    renderCard();
+    await openForm(user);
+
+    await user.selectOptions(screen.getByLabelText("Ativo"), "2");
+    await user.type(screen.getByLabelText("Valor do aporte (R$)"), "90");
+    await user.click(screen.getByRole("checkbox", { name: "Fora da meta do mês" }));
+    await user.click(screen.getAllByRole("button", { name: "Registrar aporte" }).at(-1)!);
+
+    await waitFor(() => expect(calls.some((c) => c.init?.method === "POST")).toBe(true));
+    expect(JSON.parse(String(calls.find((c) => c.init?.method === "POST")!.init!.body))).toMatchObject({
+      contribution_cents: 9_000,
+      off_goal: true,
+    });
+  });
+
+  it("o aporte marcado ganha o selo em texto e a ação de voltar a contar; o resumo mostra o total fora da meta", async () => {
+    mockApi([{ ...aporteMovement, off_goal: true }], [], { ...emptySummary, registered_cents: 9_000, total_cents: 9_000, off_goal_cents: 9_000 });
+    renderCard();
+
+    expect(await screen.findByText("Fora da meta")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Contar na meta.*R\$\s90,00 em Cofrinho Mercado Pago/ })).toBeInTheDocument();
+    expect(nb((await screen.findByText(/Total investido no mês/)).textContent)).toContain("· Fora da meta: R$ 90,00");
+  });
+
+  it("sem aporte marcado, não há selo nem linha de fora da meta", async () => {
+    mockApi([aporteMovement]);
+    renderCard();
+    expect(await screen.findByText(/Total investido no mês/)).not.toHaveTextContent("Fora da meta");
+    expect(screen.queryByText("Fora da meta")).not.toBeInTheDocument();
+  });
+
+  it("“Tirar da meta” grava off_goal e diz o que foi feito e o que muda", async () => {
+    const user = userEvent.setup();
+    const calls = mockApi([aporteMovement]);
+    renderCard();
+
+    await user.click(await screen.findByRole("button", { name: /^Tirar da meta.*R\$\s90,00 em Cofrinho Mercado Pago/ }));
+
+    await waitFor(() => expect(calls.some((c) => c.init?.method === "PATCH")).toBe(true));
+    const patch = calls.find((c) => c.init?.method === "PATCH")!;
+    expect(patch.url).toBe("/api/v1/movements/6");
+    expect(JSON.parse(String(patch.init!.body))).toEqual({ off_goal: true });
+    const status = await screen.findByRole("status");
+    expect(nb(status.textContent)).toBe(
+      "Aporte de R$ 90,00 em Cofrinho Mercado Pago marcado como fora da meta. Ele continua no investido; o plano do mês e a sequência deixam de contá-lo.",
+    );
+  });
+
+  it("“Contar na meta” desmarca e avisa que o plano volta a contar o aporte", async () => {
+    const user = userEvent.setup();
+    const calls = mockApi([{ ...aporteMovement, off_goal: true }]);
+    renderCard();
+
+    await user.click(await screen.findByRole("button", { name: /^Contar na meta/ }));
+
+    await waitFor(() => expect(calls.some((c) => c.init?.method === "PATCH")).toBe(true));
+    expect(JSON.parse(String(calls.find((c) => c.init?.method === "PATCH")!.init!.body))).toEqual({ off_goal: false });
+    expect(nb((await screen.findByRole("status")).textContent)).toContain("voltou a contar na meta");
+  });
+
+  it("só o aporte tem a ação: provento não", async () => {
+    mockApi([{ ...aporteMovement, id: 7, kind: "provento", related_asset_name: null }]);
+    renderCard();
+    await screen.findByRole("button", { name: /^Editar provento/ });
+    expect(screen.queryByRole("button", { name: /meta/ })).not.toBeInTheDocument();
   });
 });
 

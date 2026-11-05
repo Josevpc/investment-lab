@@ -1,5 +1,5 @@
 import { useComparison, type HoldStatus } from "@/features/allocation";
-import { planProgress, useContributions } from "@/features/contributions";
+import { executedFromSummary, planProgress, useContributions } from "@/features/contributions";
 import { useMonthSummary } from "@/features/portfolio";
 
 /**
@@ -19,6 +19,5 @@ export function useMonthRemaining(month: string): number | null {
   if (!contribution || contribution.plan.length === 0 || !summary.data || !comparison.data) return null;
 
   const holdStatus: Record<string, HoldStatus> = Object.fromEntries(comparison.data.items.map((i) => [i.class_key, i.hold_status]));
-  return planProgress(contribution, { byClass: summary.data.by_class, reserveCents: summary.data.reserve_cents }, holdStatus)
-    .remainingCents;
+  return planProgress(contribution, executedFromSummary(summary.data), holdStatus).remainingCents;
 }

@@ -77,7 +77,10 @@ def _month_facts(session: Session, current_month: str) -> dict[str, domain.Month
     if not contributions:
         return {}
     first = min(contributions)
-    executed = aportes_by_month(session, domain.month_add(first, -1), current_month)
+    # Aporte "fora da meta" não cumpre o plano do mês: a sequência só conta o que entrou na meta.
+    executed = aportes_by_month(
+        session, domain.month_add(first, -1), current_month, include_off_goal=False
+    )
     closed = {row.date.strftime("%Y-%m") for row in list_snapshot_rows(session)}
     return {
         month: domain.MonthFacts(
@@ -146,10 +149,15 @@ def _year_progress(session: Session, year: int, goal: int) -> YearProgress:
 
 
 def _contribution_pace(session: Session, current_month: str, goal: int) -> ContributionPace:
-    """Média de aporte dos últimos meses completos (inclui o aporte inicial dos ativos novos)."""
+    """Média de aporte dos últimos meses completos (inclui o aporte inicial dos ativos novos).
+
+    Os aportes fora da meta ficam de fora: um aporte avulso não é o ritmo mensal do usuário.
+    """
     reference = domain.month_add(current_month, -1)
     longest = max(domain.PACE_WINDOWS)
-    by_month = aportes_by_month(session, domain.month_add(reference, -longest), reference)
+    by_month = aportes_by_month(
+        session, domain.month_add(reference, -longest), reference, include_off_goal=False
+    )
     windows = domain.pace_windows(by_month, reference)
     suggestion = domain.suggested_goal(windows, goal)
     return ContributionPace(

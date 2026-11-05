@@ -171,6 +171,53 @@ describe("ContributionPage: reserva acima do possível", () => {
     expect(document.body).toHaveTextContent(/mais do que falta para a meta da reserva: o valor foi limitado a R\$\s200,00/);
   });
 
+  describe("com reserva já registrada no mês", () => {
+    // Faltam R$ 200,00 para a meta; o que já foi para a reserva neste mês volta ao limite, mas só a parte que conta na meta.
+    const monthSummary = (reserveCents: number, reserveGoalCents: number) => ({
+      month: currentMonth(),
+      by_class: [{ class_key: "cripto", class_name: "Criptomoedas", color: "#222", amount_cents: 0, goal_cents: 0 }],
+      reserve_cents: reserveCents,
+      reserve_goal_cents: reserveGoalCents,
+      off_goal_cents: reserveCents - reserveGoalCents,
+      total_cents: reserveCents,
+      proventos_cents: 0,
+      redemptions_cents: 0,
+      registered_cents: reserveCents,
+      new_assets_cents: 0,
+      new_assets: [],
+    });
+
+    it("a reserva marcada como fora da meta não volta ao limite", async () => {
+      const user = userEvent.setup();
+      renderPage({
+        "/contributions": json([earlier]),
+        "/reserve": json({ ...reserve, remaining_cents: 20_000 }),
+        "/portfolio/month-summary": json(monthSummary(20_000, 0)),
+      });
+
+      const field = await screen.findByRole("textbox", { name: /^Parte para a reserva de emergência/ });
+      await user.type(field, "100%"); // R$ 650,00; o limite continua os R$ 200,00 que faltam
+      await waitFor(() =>
+        expect(document.body).toHaveTextContent(/mais do que falta para a meta da reserva: o valor foi limitado a R\$\s200,00/),
+      );
+    });
+
+    it("a reserva que conta na meta volta ao limite", async () => {
+      const user = userEvent.setup();
+      renderPage({
+        "/contributions": json([earlier]),
+        "/reserve": json({ ...reserve, remaining_cents: 20_000 }),
+        "/portfolio/month-summary": json(monthSummary(20_000, 20_000)),
+      });
+
+      const field = await screen.findByRole("textbox", { name: /^Parte para a reserva de emergência/ });
+      await user.type(field, "100%"); // R$ 650,00; o limite sobe para R$ 400,00 (R$ 200,00 que faltam + R$ 200,00 já na meta)
+      await waitFor(() =>
+        expect(document.body).toHaveTextContent(/mais do que falta para a meta da reserva: o valor foi limitado a R\$\s400,00/),
+      );
+    });
+  });
+
   it("dentro do limite, não avisa nada", async () => {
     const user = userEvent.setup();
     renderPage({ "/contributions": json([earlier]), "/reserve": json(reserve) });

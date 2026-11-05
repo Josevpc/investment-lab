@@ -50,7 +50,7 @@ function renderCard(comparison: Response | (() => Response), contributions: unkn
       if (url.endsWith("/contributions")) return json(contributions);
       if (url.endsWith("/snapshots")) return json([]);
       if (url.includes("/portfolio/month-summary")) {
-        return json({ month, by_class: [{ class_key: "cripto", class_name: "Criptomoedas", color: "#222", amount_cents: 12_000 }], reserve_cents: 0, total_cents: 12_000, proventos_cents: 0 });
+        return json({ month, by_class: [{ class_key: "cripto", class_name: "Criptomoedas", color: "#222", amount_cents: 12_000, goal_cents: 12_000 }], reserve_cents: 0, reserve_goal_cents: 0, off_goal_cents: 0, total_cents: 12_000, proventos_cents: 0 });
       }
       if (url.endsWith("/allocation/comparison")) return typeof comparison === "function" ? comparison() : comparison.clone();
       return new Response(JSON.stringify({ detail: "não usado" }), { status: 404 });

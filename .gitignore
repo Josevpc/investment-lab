@@ -21,6 +21,8 @@ backup*.json
 # Capturas de tela tiradas do app (podem mostrar valores reais)
 capturas/
 screenshots/
+# Snapshots e traços do playwright-cli (a página aberta pode mostrar valores)
+.playwright-cli/
 
 # ============================================================================
 # Segredos e ambiente

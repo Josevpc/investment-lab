@@ -1,6 +1,6 @@
 import { Link, useLocation } from "react-router-dom";
 import { useComparison, type HoldStatus } from "@/features/allocation";
-import { planProgress, useContributions } from "@/features/contributions";
+import { executedFromSummary, planProgress, useContributions } from "@/features/contributions";
 import { useSnapshots } from "@/features/history";
 import { useMonthSummary, usePortfolioSummary } from "@/features/portfolio";
 import { currentMonth } from "@/shared/lib/format";
@@ -31,11 +31,7 @@ export function useNextStep(): NextStep | null {
   const thisMonth = (contributions.data ?? []).find((c) => c.month === month);
   const progress =
     thisMonth && thisMonth.plan.length > 0 && monthSummary.data
-      ? planProgress(
-          thisMonth,
-          { byClass: monthSummary.data.by_class, reserveCents: monthSummary.data.reserve_cents },
-          holdStatus,
-        )
+      ? planProgress(thisMonth, executedFromSummary(monthSummary.data), holdStatus)
       : null;
   const largest = progress ? [...progress.rows].sort((a, b) => b.remainingCents - a.remainingCents)[0] : undefined;
 

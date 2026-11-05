@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Contribution } from "../types";
-import { planProgress } from "./planProgress";
+import { executedFromSummary, planProgress } from "./planProgress";
 
 const contribution: Contribution = {
   id: 1,
@@ -85,5 +85,47 @@ describe("planProgress", () => {
 
   it("sem a situação do back-end, ninguém é mantido", () => {
     expect(planProgress(contribution, executed({})).rows.some((r) => r.held)).toBe(false);
+  });
+
+  describe("aporte fora da meta do mês", () => {
+    // R$ 20 aportados na reserva, todos marcados como fora da meta: o resumo do mês traz o total, mas a parte da meta é zero.
+    const summary = {
+      by_class: [
+        { class_key: "renda_variavel", class_name: "Renda Variável", color: "#000", amount_cents: 4_000, goal_cents: 4_000 },
+        { class_key: "cripto", class_name: "Cripto", color: "#000", amount_cents: 3_000, goal_cents: 3_000 },
+      ],
+      reserve_goal_cents: 0,
+      off_goal_cents: 2_000,
+    };
+
+    it("usa só a parte que conta na meta (goal_cents e reserve_goal_cents)", () => {
+      const withOff = { ...summary, by_class: [{ ...summary.by_class[0], amount_cents: 5_000, goal_cents: 1_000 }] };
+      expect(executedFromSummary(withOff)).toEqual({
+        byClass: [{ class_key: "renda_variavel", amount_cents: 1_000 }],
+        reserveCents: 0,
+        offGoalCents: 2_000,
+      });
+    });
+
+    it("a reserva aportada fora da meta não vira cumprida nem gera extra", () => {
+      const p = planProgress(contribution, executedFromSummary(summary));
+      expect(p.rows.find((r) => r.key === "reserva")).toMatchObject({ plannedCents: 2_000, doneCents: 0, remainingCents: 2_000, overCents: 0 });
+      expect(p.complete).toBe(false);
+      expect(p.remainingCents).toBe(2_000);
+      expect(p.doneCents).toBe(7_000);
+      expect(p.doneCents - p.plannedCents).toBeLessThanOrEqual(0); // nenhum "Extra do mês"
+    });
+
+    it("categoria aportada além do planejado só passa do plano com a parte que conta", () => {
+      const p = planProgress(
+        contribution,
+        executedFromSummary({
+          by_class: [{ class_key: "cripto", class_name: "Cripto", color: "#000", amount_cents: 8_000, goal_cents: 3_000 }],
+          reserve_goal_cents: 2_000,
+          off_goal_cents: 5_000,
+        }),
+      );
+      expect(p.rows.find((r) => r.key === "cripto")).toMatchObject({ doneCents: 3_000, remainingCents: 0, overCents: 0 });
+    });
   });
 });

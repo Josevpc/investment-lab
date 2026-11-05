@@ -160,6 +160,7 @@ def record_balance(session: Session, asset_id: int, data: BalanceIn) -> AssetOut
                 kind="aporte",
                 asset_id=asset.id,
                 amount_cents=data.contribution_cents,
+                off_goal=data.off_goal,
             )
             session.add(movement)
             _book_contribution_in_cash(session, asset, movement, data.use_cash)
@@ -195,6 +196,7 @@ def create_purchase(session: Session, data: PurchaseIn) -> PurchaseOut:
             asset_id=asset.id,
             amount_cents=amount,
             from_purchase=True,
+            off_goal=data.off_goal,
         )
         session.add(movement)
         session.flush()
@@ -442,6 +444,7 @@ def _movement_out(movement: AssetMovement) -> MovementOut:
         initial=movement.initial,
         note=movement.note,
         in_balance=movement.in_balance,
+        off_goal=movement.off_goal,
     )
 
 
@@ -695,12 +698,22 @@ def update_movement(session: Session, movement_id: int, data: MovementUpdate) ->
     couber no histórico do ativo, nada muda. Numa transferência ou num resgate, o custo é
     recalculado proporcionalmente ao saldo do dia. Fechamentos (snapshots) já gravados não mudam.
 
-    Num resgate também dá para trocar ou apagar o motivo, sem mexer em saldo nenhum.
+    Num resgate também dá para trocar ou apagar o motivo, e num aporte marcar ou desmarcar "fora da
+    meta" (inclusive no aporte inicial); os dois só gravam o campo, sem mexer em saldo, caixa nem
+    custo.
     """
     movement = repo.get_movement(session, movement_id)
     if movement is None:
         raise NotFoundError("Movimento não encontrado.")
-    if movement.initial:
+    off_goal_given = data.off_goal is not None
+    if off_goal_given and movement.kind != "aporte":
+        raise InvalidInputError("Só aportes podem ficar fora da meta.")
+    if movement.initial and not (
+        off_goal_given
+        and data.amount_cents is None
+        and data.date is None
+        and "note" not in data.model_fields_set
+    ):
         raise ConflictError(
             "Esse é o aporte inicial do ativo. Para mudar, edite o valor do ativo ou "
             "marque-o como antigo."
@@ -711,7 +724,7 @@ def update_movement(session: Session, movement_id: int, data: MovementUpdate) ->
     amount = data.amount_cents if data.amount_cents is not None else movement.amount_cents
     on_date = data.date if data.date is not None else movement.date
     moved = (amount, on_date) != (movement.amount_cents, movement.date)
-    if not moved and not note_given:
+    if not moved and not note_given and not off_goal_given:
         return _movement_out(movement)
     if moved:
         _refuse_crossing_into_cash(session, movement, on_date)
@@ -724,6 +737,8 @@ def update_movement(session: Session, movement_id: int, data: MovementUpdate) ->
             cash.stage_change_movement(session, movement.id, on_date=on_date, amount_cents=amount)
         if note_given:
             movement.note = data.note
+        if off_goal_given:
+            movement.off_goal = data.off_goal
         session.commit()
     except Exception:
         session.rollback()
@@ -731,10 +746,18 @@ def update_movement(session: Session, movement_id: int, data: MovementUpdate) ->
     return _movement_out(movement)
 
 
-def aportes_by_month(session: Session, after_month: str, up_to_month: str) -> dict[str, int]:
-    """Aportes lançados nos ativos, somados por mês, no intervalo (after_month, up_to_month]."""
+def aportes_by_month(
+    session: Session, after_month: str, up_to_month: str, *, include_off_goal: bool = True
+) -> dict[str, int]:
+    """Aportes lançados nos ativos, somados por mês, no intervalo (after_month, up_to_month].
+
+    Com `include_off_goal=False`, os aportes marcados "fora da meta" ficam de fora: é a conta da
+    sequência de meses cumpridos e do ritmo de aporte.
+    """
     totals: dict[str, int] = {}
     for movement in repo.list_movements(session, kind="aporte"):
+        if movement.off_goal and not include_off_goal:
+            continue
         month = movement.date.strftime("%Y-%m")
         if after_month < month <= up_to_month:
             totals[month] = totals.get(month, 0) + movement.amount_cents
@@ -863,10 +886,15 @@ def get_month_summary(session: Session, month: str) -> MonthSummary:
 
     Inclui o aporte inicial dos ativos novos; `registered_cents` e `new_assets_cents` separam o
     que foi lançado do que entrou com o cadastro, e os dois somam `total_cents`.
+
+    Os aportes "fora da meta" contam em tudo isso (a carteira os tem, e `split_contribution`
+    desconta `by_class` dela); `goal_cents`, `reserve_goal_cents` e `off_goal_cents` separam a
+    parte que conta no plano do mês: total = reserva na meta + categorias na meta + fora da meta.
     """
     classes = {c.id: c for c in repo.list_classes(session)}
     by_class = {cid: 0 for cid in classes}
-    reserve = proventos = registered = redemptions = 0
+    goal_by_class = {cid: 0 for cid in classes}
+    reserve = reserve_goal = off_goal = proventos = registered = redemptions = 0
     new_assets: list[NewAssetAmount] = []
     for movement in repo.list_movements(session, month=month):
         if movement.kind == "provento":
@@ -884,10 +912,15 @@ def get_month_summary(session: Session, month: str) -> MonthSummary:
                 )
             else:
                 registered += movement.amount_cents
+            counted = 0 if movement.off_goal else movement.amount_cents
             if movement.asset.purpose == "reserva":
                 reserve += movement.amount_cents
+                reserve_goal += counted
+                off_goal += movement.amount_cents - counted
             elif movement.asset.class_id in by_class:
                 by_class[movement.asset.class_id] += movement.amount_cents
+                goal_by_class[movement.asset.class_id] += counted
+                off_goal += movement.amount_cents - counted
     return MonthSummary(
         month=month,
         by_class=[
@@ -896,10 +929,13 @@ def get_month_summary(session: Session, month: str) -> MonthSummary:
                 class_name=classes[cid].name,
                 color=classes[cid].color,
                 amount_cents=amount,
+                goal_cents=goal_by_class[cid],
             )
             for cid, amount in by_class.items()
         ],
         reserve_cents=reserve,
+        reserve_goal_cents=reserve_goal,
+        off_goal_cents=off_goal,
         total_cents=reserve + sum(by_class.values()),
         registered_cents=registered,
         new_assets_cents=sum(item.amount_cents for item in new_assets),

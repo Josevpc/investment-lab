@@ -59,6 +59,7 @@ export const portfolioApi = {
   },
   deleteMovement: (id: number) => api.delete(`/movements/${id}`),
   updateMovement: (id: number, input: MovementUpdateInput) => api.patch<Movement>(`/movements/${id}`, input),
+  setOffGoal: (id: number, offGoal: boolean) => api.patch<Movement>(`/movements/${id}`, { off_goal: offGoal }),
   undoMovement: (id: number) => api.post<Movement>(`/movements/${id}/undo`),
   withdrawals: (year?: number | null) => api.get<WithdrawalList>(`/withdrawals${year ? `?year=${year}` : ""}`),
   monthSummary: (month: string) => api.get<MonthSummary>(`/portfolio/month-summary?month=${month}`),

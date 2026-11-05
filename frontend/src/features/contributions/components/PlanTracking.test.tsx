@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MoneyTextPart } from "@/shared/lib/moneyText";
@@ -52,6 +52,7 @@ function renderWith(
   executed: { class_key: string; amount_cents: number }[] = [],
   failComparison = false,
   investedDetail: MoneyTextPart[] | null = null,
+  offGoalCents = 0,
 ) {
   const comparison = { plan_id: 1, plan_name: "Plano padrão", total_cents: 2000, base_cents: 1000, items };
   vi.stubGlobal(
@@ -68,7 +69,7 @@ function renderWith(
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <PlanTracking contribution={c} executed={{ byClass: executed, reserveCents: 0 }} investedDetail={investedDetail} />
+        <PlanTracking contribution={c} executed={{ byClass: executed, reserveCents: 0, offGoalCents }} investedDetail={investedDetail} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -151,5 +152,24 @@ describe("PlanTracking", () => {
     const detail = label.parentElement!;
     expect(detail.textContent?.replace(/ /g, " ")).toContain("R$ 600,00R$ 100,00 em aportes + R$ 500,00 em ativo novo (CDB X)");
     expect(textOutsideMoney(detail)).not.toMatch(/R\$/);
+  });
+
+  it("com aporte fora da meta, mostra o total à parte, sem contá-lo no plano nem no extra", async () => {
+    // Plano de R$ 1.000; R$ 600 contam na meta e R$ 90 foram para a reserva, fora da meta.
+    renderWith([comparisonItem("rf", "Renda fixa", "none", [])], contribution, [{ class_key: "rf", amount_cents: 60_000 }], false, null, 9_000);
+    const invested = (await screen.findByText("Investido no mês")).parentElement!;
+    const text = invested.textContent?.replace(/ /g, " ");
+    expect(text).toContain("R$ 690,00");
+    expect(text).toContain("Fora da meta: R$ 90,00 (não conta no plano)");
+    expect(textOutsideMoney(invested)).not.toMatch(/R\$/);
+    // O "falta" só aparece quando a situação das categorias mantidas chega.
+    await waitFor(() => expect(screen.getByText("Ainda falta aportar").nextElementSibling).toHaveTextContent(/R\$\s400,00/));
+    expect(screen.queryByText("Extra do mês")).not.toBeInTheDocument();
+  });
+
+  it("sem aporte fora da meta, a linha não aparece", async () => {
+    renderWith([comparisonItem("rf", "Renda fixa", "none", [])]);
+    await screen.findByText("Investido no mês");
+    expect(screen.queryByText(/Fora da meta/)).not.toBeInTheDocument();
   });
 });

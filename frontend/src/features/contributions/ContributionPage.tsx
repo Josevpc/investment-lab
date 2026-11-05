@@ -50,6 +50,7 @@ import { useContributions, useSaveContribution } from "./hooks";
 import { PlanTracking } from "./components/PlanTracking";
 import { calculateContribution } from "./lib/calculate";
 import { destinationText } from "./lib/destination";
+import { executedFromSummary } from "./lib/planProgress";
 import { parseReserveInput } from "./lib/reserve";
 
 const DEFAULT_PERCENT_BPS = 750;
@@ -129,9 +130,10 @@ export function ContributionPage() {
   const reserveText = reserveEdit ?? (reserveInitial > 0 ? centsToInput(reserveInitial) : "");
   const reserveParsed = parseReserveInput(reserveText, finalCents);
   // A reserva recebe no máximo o que falta para a meta (se houver meta) e no máximo o aporte inteiro.
-  // O que já foi para a reserva neste mês volta ao limite: ele já estava na meta quando foi gravado.
+  // O que já foi para a reserva neste mês volta ao limite: ele já estava na meta quando foi gravado. Só a parte que
+  // conta na meta do mês (`reserve_goal_cents`): a sobra marcada como fora da meta não é do plano e não volta ao limite.
   const reserveCap =
-    r && r.goal_cents > 0 ? r.remaining_cents + (monthSummary.data?.reserve_cents ?? 0) : Number.POSITIVE_INFINITY;
+    r && r.goal_cents > 0 ? r.remaining_cents + (monthSummary.data?.reserve_goal_cents ?? 0) : Number.POSITIVE_INFINITY;
   const reserveCents = Math.min(reserveParsed ?? 0, finalCents, reserveCap);
   // Se o digitado passa do limite, a tela não corta em silêncio: o aviso diz a que valor foi limitado e por quê.
   const reserveLimitedBy =
@@ -226,7 +228,7 @@ export function ContributionPage() {
   const shares = items.length ? allocateBps(10_000, items.map((i) => (investCents > 0 ? i.amount_cents : i.effective_target_bps))) : [];
   const donutValues = Object.fromEntries(items.map((item, i) => [item.class_key, shares[i]]));
   const donutClasses = items.map((i) => ({ key: i.class_key, name: i.class_name, color: i.color }));
-  const showReserveRow = reserveCents > 0 || (monthSummary.data?.reserve_cents ?? 0) > 0;
+  const showReserveRow = reserveCents > 0 || (monthSummary.data?.reserve_goal_cents ?? 0) > 0;
   const sumsMatch =
     finalCents > 0 && allItems.reduce((sum, item) => sum + item.amount_cents, 0) + reserveCents === finalCents;
 
@@ -242,7 +244,7 @@ export function ContributionPage() {
         {existing && existing.plan.length > 0 && monthSummary.data && (
           <PlanTracking
             contribution={existing}
-            executed={{ byClass: monthSummary.data.by_class, reserveCents: monthSummary.data.reserve_cents }}
+            executed={executedFromSummary(monthSummary.data)}
             investedDetail={invested}
           />
         )}
