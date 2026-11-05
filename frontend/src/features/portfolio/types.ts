@@ -115,6 +115,8 @@ export interface BalanceInput {
   use_cash?: boolean;
   /** Moedas compradas no aporte (cripto): o back-end soma à quantidade do ativo. */
   quantity_added?: string;
+  /** Aporte fora da meta do mês: conta no investido, mas não no plano, no "extra" nem na sequência. Ignorado sem aporte. */
+  off_goal?: boolean;
 }
 
 export type MovementKind = "aporte" | "provento" | "transferencia" | "resgate";
@@ -135,6 +137,8 @@ export interface Movement {
   note: string | null;
   /** Resgate com "o saldo que digitei já está sem esse dinheiro": só o investido foi ajustado. */
   in_balance: boolean;
+  /** Só aporte: fica fora da meta do mês (continua no investido e no patrimônio; não conta no plano nem na sequência). */
+  off_goal: boolean;
 }
 
 /** Correção de um movimento: ao menos um campo. O motivo (`note`) só vale no resgate, que não muda valor nem data. */
@@ -178,6 +182,7 @@ export interface PurchaseInput {
   date?: string;
   /** Caixa insuficiente: grava antes um depósito desse valor (dinheiro novo). */
   deposit_cents?: number;
+  off_goal?: boolean;
 }
 
 export interface PurchaseResult {
@@ -190,8 +195,13 @@ export interface PurchaseResult {
 
 export interface MonthSummary {
   month: string;
-  by_class: { class_key: string; class_name: string; color: string; amount_cents: number }[];
+  /** `amount_cents` inclui tudo o que foi aportado; `goal_cents` é a parte que conta na meta do mês. */
+  by_class: { class_key: string; class_name: string; color: string; amount_cents: number; goal_cents: number }[];
   reserve_cents: number;
+  /** Parte da reserva aportada que conta na meta do mês. */
+  reserve_goal_cents: number;
+  /** Aportes marcados como fora da meta (reserva e categorias juntas). total = reserva na meta + categorias na meta + fora da meta. */
+  off_goal_cents: number;
   /** registered_cents + new_assets_cents. */
   total_cents: number;
   proventos_cents: number;

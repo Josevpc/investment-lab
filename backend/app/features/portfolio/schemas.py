@@ -219,6 +219,9 @@ class BalanceIn(BaseModel):
     use_cash: bool = False
     # Moedas compradas no aporte (cripto): somam à quantidade do ativo (até 8 casas).
     quantity_added: str | None = Field(default=None, max_length=40)
+    # Aporte fora da meta: vale só para o aporte criado aqui (`contribution_cents > 0`); sem aporte
+    # é ignorado. Conta em tudo (investido, rentabilidade, caixa), menos no plano do mês.
+    off_goal: bool = False
 
     @field_validator("quantity_added")
     @classmethod
@@ -276,6 +279,8 @@ class PurchaseIn(BaseModel):
     unit_price_cents: int | None = Field(default=None, gt=0, le=MAX_CENTS)
     # Atalho para caixa insuficiente: grava um depósito desse valor antes da compra.
     deposit_cents: int | None = Field(default=None, gt=0, le=MAX_CENTS)
+    # Compra fora da meta: conta no investido e no caixa, mas não no plano do mês.
+    off_goal: bool = False
 
     @field_validator("quantity")
     @classmethod
@@ -311,19 +316,27 @@ class PurchaseIn(BaseModel):
 
 
 class MovementUpdate(BaseModel):
-    """Correção de um movimento já lançado: o valor, a data e, nos resgates, o motivo."""
+    """Correção de um movimento já lançado: valor, data, o motivo (resgates) e a marca de meta."""
 
     amount_cents: int | None = Field(default=None, gt=0)
     date: dt.date | None = None
     # Só vale em resgate. Enviado (mesmo vazio ou nulo), troca ou apaga o motivo; omitido, mantém.
     note: str | None = Field(default=None, max_length=NOTE_MAX_LENGTH)
+    # Só vale em aporte. Marca ou desmarca "fora da meta" sem mexer em saldo, caixa nem custo.
+    # Nulo ou omitido: mantém.
+    off_goal: bool | None = None
 
     _clean_note = field_validator("note", mode="before")(_clean_note)
 
     @model_validator(mode="after")
     def _something_to_change(self):
-        if self.amount_cents is None and self.date is None and "note" not in self.model_fields_set:
-            raise ValueError("Informe o novo valor, a nova data ou o motivo.")
+        if (
+            self.amount_cents is None
+            and self.date is None
+            and "note" not in self.model_fields_set
+            and self.off_goal is None
+        ):
+            raise ValueError("Informe o novo valor, a nova data, o motivo ou a marca de meta.")
         return self
 
 
@@ -341,6 +354,9 @@ class MovementOut(BaseModel):
     note: str | None = None  # motivo do resgate (só resgates têm)
     # Resgate cujo saldo digitado já veio sem o dinheiro: só o custo saiu do investido.
     in_balance: bool = False
+    # Aporte fora da meta: conta no investido e nos saldos, mas não no plano do mês nem na sequência
+    # (nem no ritmo de aporte).
+    off_goal: bool = False
 
 
 class WithdrawalOut(BaseModel):
@@ -387,7 +403,8 @@ class ClassMonthAmount(BaseModel):
     class_key: str
     class_name: str
     color: str
-    amount_cents: int
+    amount_cents: int  # tudo o que foi aportado na categoria no mês, marcados inclusive
+    goal_cents: int = 0  # parte de amount_cents que conta na meta (sem os aportes fora da meta)
 
 
 class NewAssetAmount(BaseModel):
@@ -401,11 +418,16 @@ class MonthSummary(BaseModel):
     by_class: list[ClassMonthAmount]
     reserve_cents: int
     # registered_cents (aportes lançados) + new_assets_cents (aportes iniciais de ativos novos).
-    # O total, as categorias e a reserva já incluem os dois.
+    # O total, as categorias e a reserva já incluem os dois, e também os aportes fora da meta.
     total_cents: int
     registered_cents: int
     new_assets_cents: int
     new_assets: list[NewAssetAmount]
+    # Parte da reserva que conta na meta (sem os aportes fora da meta).
+    reserve_goal_cents: int = 0
+    # Aportes marcados "fora da meta" no mês (reserva e categorias juntas, aporte inicial incluso).
+    # total_cents == reserve_goal_cents + soma de goal_cents das categorias + off_goal_cents.
+    off_goal_cents: int = 0
     proventos_cents: int
     # Resgates do mês (dinheiro que saiu dos ativos). Não abatem o total acima: ele só soma aportes.
     redemptions_cents: int = 0

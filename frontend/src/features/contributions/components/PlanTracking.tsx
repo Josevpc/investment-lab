@@ -4,12 +4,12 @@ import type { MoneyTextPart } from "@/shared/lib/moneyText";
 import { Badge, ButtonLink, Card, cx, Money, Swatch } from "@/shared/ui";
 import { MoneyText } from "@/shared/ui/MoneyText";
 import { PebbleBar } from "@/shared/ui/PebbleBar";
-import { planProgress, type PlanRow } from "../lib/planProgress";
+import { planProgress, type Executed, type PlanRow } from "../lib/planProgress";
 import type { Contribution } from "../types";
 
 interface Props {
   contribution: Contribution;
-  executed: { byClass: { class_key: string; amount_cents: number }[]; reserveCents: number };
+  executed: Executed;
   /** "R$ A em aportes + R$ B em ativos novos (...)", quando houve ativo novo no mês. */
   investedDetail?: MoneyTextPart[] | null;
 }
@@ -68,6 +68,7 @@ export function PlanTracking({ contribution, executed, investedDetail }: Props) 
   const heldRows = progress.rows.filter((row) => row.held);
   // Extra: o total aportado que passou do planejado (aporte a mais do que o previsto no mês).
   const extraCents = amountUnknown ? 0 : Math.max(0, progress.doneCents - progress.plannedCents);
+  const offGoalCents = executed.offGoalCents ?? 0;
   const name = monthName(contribution.month);
   const totalBps =
     progress.plannedCents > 0 ? Math.min(10_000, Math.round((progress.doneCents * 10_000) / progress.plannedCents)) : null;
@@ -89,8 +90,14 @@ export function PlanTracking({ contribution, executed, investedDetail }: Props) 
         <div>
           <dt className="text-sm text-ink-3">Investido no mês</dt>
           <dd className="mt-1 font-serif text-2xl">
-            <Money cents={progress.doneCents} />
+            {/* Com aportes fora da meta, o investido inclui a sobra marcada; o que conta no plano é só `doneCents`. */}
+            <Money cents={progress.doneCents + offGoalCents} />
           </dd>
+          {offGoalCents > 0 && (
+            <dd className="mt-0.5 max-w-xs text-sm text-ink-3">
+              Fora da meta: <Money cents={offGoalCents} /> (não conta no plano)
+            </dd>
+          )}
           {investedDetail && (
             <dd className="mt-0.5 max-w-xs text-sm text-ink-3">
               <MoneyText parts={investedDetail} />

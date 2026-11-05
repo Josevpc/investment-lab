@@ -1,4 +1,5 @@
 import type { HoldStatus } from "@/features/allocation";
+import type { MonthSummary } from "@/features/portfolio";
 import { RESERVE_COLOR } from "@/shared/lib/chart";
 import type { Contribution } from "../types";
 
@@ -28,11 +29,22 @@ export interface PlanProgress {
   complete: boolean;
 }
 
+/** O que já foi aportado e conta na meta do mês. O que está "fora da meta" não entra aqui: vem à parte, só para ser mostrado. */
 export interface Executed {
   byClass: { class_key: string; amount_cents: number }[];
   reserveCents: number;
+  /** Total marcado como fora da meta (reserva e categorias): continua investido, mas não conta no plano. */
+  offGoalCents?: number;
 }
 
+/** "Feito x planejado" usa só a parte que conta na meta (`goal_cents`), não o total aportado. */
+export function executedFromSummary(summary: Pick<MonthSummary, "by_class" | "reserve_goal_cents" | "off_goal_cents">): Executed {
+  return {
+    byClass: summary.by_class.map((c) => ({ class_key: c.class_key, amount_cents: c.goal_cents })),
+    reserveCents: summary.reserve_goal_cents,
+    offGoalCents: summary.off_goal_cents,
+  };
+}
 
 /**
  * Compara o plano gravado do mês com o que já foi aportado (diário de movimentos).

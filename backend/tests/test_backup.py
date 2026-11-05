@@ -1298,3 +1298,66 @@ def test_restore_rejects_a_category_pointing_to_a_group_the_backup_does_not_have
 
     assert response.status_code == 422
     assert state(client) == before
+
+
+# ---- aporte fora da meta -----------------------------------------------------------------
+
+
+def test_restore_converts_a_backup_from_revision_0016_with_every_movement_counting_in_the_goal(
+    client, make_asset, tmp_path
+):
+    make_asset(name="Será substituído")
+    old = legacy_backup(tmp_path, "0016", fill_rev_0014)
+    assert old["tables"]["asset_movement"]  # há movimento no arquivo...
+    assert all("off_goal" not in row for row in old["tables"]["asset_movement"])  # ...sem a coluna
+
+    inspected = client.post(f"{API}/backup/inspect", json=old).json()
+    assert inspected["valid"] is True and inspected["needs_conversion"] is True
+
+    response = client.post(f"{API}/backup/restore", json={"backup": old, "confirm": True})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["converted_from_revision"] == "0016"
+    movements = client.get(f"{API}/movements").json()
+    assert [(m["id"], m["amount_cents"], m["off_goal"]) for m in movements] == [(1, 20_000, False)]
+    again = export(client)
+    assert again["schema_revision"] == head_revision()
+    assert [m["off_goal"] for m in again["tables"]["asset_movement"]] == [False]
+
+
+def test_backup_carries_the_off_goal_mark_through_a_restore(client, make_asset):
+    cdb = make_asset(name="CDB", invested=100_000, current=100_000, valuation_date="2026-09-30")
+    for day, balance, contribution, off_goal in (
+        ("2026-10-10", 160_000, 50_000, True),
+        ("2026-10-20", 170_000, 10_000, False),
+    ):
+        response = client.post(
+            f"{API}/assets/{cdb['id']}/balance",
+            json={
+                "date": day,
+                "balance_cents": balance,
+                "contribution_cents": contribution,
+                "off_goal": off_goal,
+            },
+        )
+        assert response.status_code == 200, response.text
+    before = state(client)
+    backup = export(client)
+    assert {m["amount_cents"]: m["off_goal"] for m in backup["tables"]["asset_movement"]} == {
+        50_000: True,
+        10_000: False,
+    }
+
+    # Depois do backup o usuário desmarca um aporte e desfaz o outro; a restauração devolve ambos.
+    by_amount = {m["amount_cents"]: m for m in client.get(f"{API}/movements").json()}
+    client.patch(f"{API}/movements/{by_amount[50_000]['id']}", json={"off_goal": False})
+    assert client.post(f"{API}/movements/{by_amount[10_000]['id']}/undo").status_code == 200
+    response = client.post(f"{API}/backup/restore", json={"backup": backup, "confirm": True})
+
+    assert response.status_code == 200, response.text
+    restored = {m["amount_cents"]: m["off_goal"] for m in client.get(f"{API}/movements").json()}
+    assert restored == {50_000: True, 10_000: False}
+    assert state(client) == before  # investido, saldos e diário idênticos
+    again = export(client)
+    again["exported_at"] = backup["exported_at"]
+    assert again == backup

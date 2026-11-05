@@ -1,8 +1,10 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useAccounts } from "@/features/cash";
+import type { MoneyTextPart } from "@/shared/lib/moneyText";
 import { centsToInput, currentMonth, formatBRL, formatDate, formatMonth, parseMoneyToCents, todayISO } from "@/shared/lib/format";
-import { Badge, Button, Card, cx, Empty, ErrorBox, Field, inputClass, Loading, Money, MonthInput, splitQuestion, useConfirm } from "@/shared/ui";
+import { Badge, Button, Card, cx, Empty, ErrorBox, Field, inputClass, Loading, Money, MonthInput, ScrollRegion, splitQuestion, useConfirm } from "@/shared/ui";
+import { MoneyText } from "@/shared/ui/MoneyText";
 import {
   useAssets,
   useDeleteMovement,
@@ -10,11 +12,13 @@ import {
   useMovements,
   useRegisterProvento,
   useSaveClosing,
+  useSetOffGoal,
   useTransfer,
   useUncountInitial,
   useUndoMovement,
   useUpdateMovement,
 } from "../hooks";
+import { OFF_GOAL_HELP, OFF_GOAL_LABEL, canBeOffGoal, offGoalActionLabel, offGoalDone } from "../lib/offGoal";
 import { uncountDone, uncountMessage } from "../lib/newInvestment";
 import { cashLink, cashUseProblem } from "../lib/cashLink";
 import { addQuantities, parseQuantity, valueFromQuote } from "../lib/quote";
@@ -364,8 +368,10 @@ function AporteForm({ assets, onDone }: { assets: Asset[]; onDone: () => void })
   const [useCash, setUseCash] = useState(false);
   const [bought, setBought] = useState("");
   const [quote, setQuote] = useState("");
+  const [offGoal, setOffGoal] = useState(false);
   const accounts = useAccounts();
   const reasonId = useId();
+  const offGoalHelpId = useId();
 
   const selected = assets.find((a) => String(a.id) === asset);
   const isCrypto = selected?.class_key === "cripto";
@@ -405,6 +411,7 @@ function AporteForm({ assets, onDone }: { assets: Asset[]; onDone: () => void })
             contribution_cents: cents,
             contribution_date: day === today ? undefined : day,
             ...(takesCash && { use_cash: true }),
+            ...(offGoal && { off_goal: true }),
             ...(byQuantity && { quantity_added: addQuantities(null, bought) ?? undefined }),
           },
         },
@@ -498,6 +505,21 @@ function AporteForm({ assets, onDone }: { assets: Asset[]; onDone: () => void })
           problemId={reasonId}
         />
       )}
+      <div>
+        <label className="flex min-h-10 cursor-pointer items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+          <input
+            type="checkbox"
+            className="size-4 accent-blue-600"
+            checked={offGoal}
+            onChange={(e) => setOffGoal(e.target.checked)}
+            aria-describedby={offGoalHelpId}
+          />
+          {OFF_GOAL_LABEL}
+        </label>
+        <p id={offGoalHelpId} className="ml-6 text-xs text-slate-600 dark:text-slate-400">
+          {OFF_GOAL_HELP}
+        </p>
+      </div>
       <ErrorBox error={save.error} />
       <div className="flex gap-2">
         <Button type="submit" disabled={!valid || save.isPending} aria-describedby={cashProblem ? reasonId : undefined}>
@@ -533,7 +555,7 @@ export function MovementsCard({
   const [month, setMonth] = useState(initialMonth ?? currentMonth());
   const [form, setForm] = useState<MovementForm | null>(null);
   const [editing, setEditing] = useState<Movement | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | MoneyTextPart[] | null>(null);
   const [redeemed, setRedeemed] = useState<RedemptionDone | null>(null);
   const [redeemAsset, setRedeemAsset] = useState<number | null>(null);
   // Ao fechar um formulário ou uma edição, o foco volta ao botão que o abriu (que some enquanto ele está aberto).
@@ -545,6 +567,7 @@ export function MovementsCard({
   const remove = useDeleteMovement();
   const undo = useUndoMovement();
   const uncount = useUncountInitial();
+  const setOffGoalFlag = useSetOffGoal();
   const { confirm, dialog } = useConfirm();
   const summary = useMonthSummary(month);
 
@@ -677,7 +700,7 @@ export function MovementsCard({
         ))}
       {notice && form === null && editing === null && (
         <p role="status" className="mb-3 text-sm text-emerald-700 dark:text-emerald-400">
-          {notice}
+          {typeof notice === "string" ? notice : <MoneyText parts={notice} />}
         </p>
       )}
       {redeemed && form === null && editing === null && (
@@ -696,6 +719,12 @@ export function MovementsCard({
             <strong><Money cents={totals.new_assets_cents} /></strong> · Total investido no mês:{" "}
             <strong className="text-slate-900 dark:text-slate-100"><Money cents={totals.total_cents} /></strong> · Proventos:{" "}
             <strong><Money cents={totals.proventos_cents} /></strong>
+            {totals.off_goal_cents > 0 && (
+              <>
+                {" "}
+                · Fora da meta: <strong><Money cents={totals.off_goal_cents} /></strong>
+              </>
+            )}
             {totals.redemptions_cents > 0 && (
               <>
                 {" "}
@@ -717,113 +746,143 @@ export function MovementsCard({
       </div>
 
       {movements.isLoading && <Loading />}
-      <ErrorBox error={movements.error ?? remove.error ?? undo.error ?? uncount.error} />
+      <ErrorBox error={movements.error ?? remove.error ?? undo.error ?? uncount.error ?? setOffGoalFlag.error} />
       {!movements.isLoading && list.length === 0 && (
         <div className="mt-3">
           <Empty>Nenhuma movimentação em {formatMonth(month)}. Use &quot;Registrar aporte&quot; ou &quot;Atualizar saldos&quot; para lançar aportes, ou &quot;Resgatar&quot; se tirou dinheiro de um ativo.</Empty>
         </div>
       )}
       {list.length > 0 && (
-        <div className="mt-3 overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-left text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              <tr>
-                <th className="pb-2 font-medium">Data</th>
-                <th className="pb-2 font-medium">Tipo</th>
-                <th className="pb-2 font-medium">Ativo</th>
-                <th className="pb-2 text-right font-medium">Valor</th>
-                <th className="pb-2" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {list.map((m) => (
-                <tr key={m.id}>
-                  <td className="py-2">{formatDate(m.date)}</td>
-                  <td className="py-2">
-                    <span className="flex flex-wrap items-center gap-1">
-                      <span className={cx("rounded px-1.5 py-0.5 text-xs font-medium", KIND_STYLE[m.kind])}>{KIND_LABEL[m.kind]}</span>
-                      {m.initial && <Badge tone="gold">Ativo novo</Badge>}
-                    </span>
-                  </td>
-                  <td className="py-2">
-                    {describe(m)}
-                    {m.kind === "resgate" && m.note && (
-                      <span className="block text-xs text-slate-600 dark:text-slate-400">Motivo: {m.note}</span>
-                    )}
-                    {m.kind === "resgate" && m.in_balance && (
-                      <span className="block text-xs text-slate-600 dark:text-slate-400">O saldo registrado já estava sem esse dinheiro</span>
-                    )}
-                  </td>
-                  <td className="tabular whitespace-nowrap py-2 text-right font-semibold">
-                    {m.kind === "resgate" && "− "}
-                    <Money cents={m.amount_cents} />
-                  </td>
-                  <td className="whitespace-nowrap py-2 text-right">
-                    {/* O aporte do cadastro não se edita nem se desfaz: o valor é o saldo inicial do ativo. Só pode deixar de contar. */}
-                    {m.initial ? (
-                      <Button
-                        variant="ghost"
-                        // Quebra em duas linhas no celular, para a tabela não alargar.
-                        size="sm" className="whitespace-normal text-right"
-                        aria-label={`Não contar como aporte: ${m.asset_name}`}
-                        disabled={uncount.isPending}
-                        onClick={async () => {
-                          if (!(await confirm({ ...splitQuestion(uncountMessage(m)), confirmLabel: "Não contar como aporte", tone: "primary" }))) return;
-                          setNotice(null);
-                          uncount.mutate(m, { onSuccess: () => setNotice(uncountDone(m)) });
-                        }}
-                      >
-                        Não contar como aporte
-                      </Button>
-                    ) : (
-                      <>
+        <>
+          <p className="mt-3 text-xs text-slate-600 md:hidden dark:text-slate-400">
+            No celular, arraste a lista para o lado para ver as ações de cada linha (Tirar da meta, Editar, Desfazer).
+          </p>
+          {/* `relative`: o texto só para leitor de tela (sr-only) é absoluto e, sem isso, escapava do overflow e alargava a página. */}
+          <ScrollRegion
+            label="Movimentações do mês"
+            className="relative mt-1 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 md:mt-3"
+          >
+            <table className="w-full text-sm">
+              <thead className="text-left text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                <tr>
+                  <th className="pb-2 font-medium">Data</th>
+                  <th className="pb-2 font-medium">Tipo</th>
+                  <th className="pb-2 font-medium">Ativo</th>
+                  <th className="pb-2 text-right font-medium">Valor</th>
+                  <th className="pb-2" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {list.map((m) => (
+                  <tr key={m.id}>
+                    <td className="py-2">{formatDate(m.date)}</td>
+                    <td className="py-2">
+                      <span className="flex flex-wrap items-center gap-1">
+                        <span className={cx("rounded px-1.5 py-0.5 text-xs font-medium", KIND_STYLE[m.kind])}>{KIND_LABEL[m.kind]}</span>
+                        {m.initial && <Badge tone="gold">Ativo novo</Badge>}
+                        {m.kind === "aporte" && m.off_goal && <Badge>Fora da meta</Badge>}
+                      </span>
+                    </td>
+                    <td className="py-2">
+                      {describe(m)}
+                      {m.kind === "resgate" && m.note && (
+                        <span className="block text-xs text-slate-600 dark:text-slate-400">Motivo: {m.note}</span>
+                      )}
+                      {m.kind === "resgate" && m.in_balance && (
+                        <span className="block text-xs text-slate-600 dark:text-slate-400">O saldo registrado já estava sem esse dinheiro</span>
+                      )}
+                    </td>
+                    <td className="tabular whitespace-nowrap py-2 text-right font-semibold">
+                      {m.kind === "resgate" && "− "}
+                      <Money cents={m.amount_cents} />
+                    </td>
+                    <td className="whitespace-nowrap py-2 text-right">
+                      {canBeOffGoal(m) && (
                         <Button
-                          ref={(el) => {
-                            editButtons.current.set(m.id, el);
-                          }}
                           variant="ghost"
-                          className="px-2 py-1 text-xs"
-                          aria-label={`Editar ${KIND_LABEL[m.kind].toLowerCase()} de ${m.asset_name}`}
+                          size="sm"
+                          disabled={setOffGoalFlag.isPending}
                           onClick={() => {
-                            setForm(null);
                             setNotice(null);
                             setRedeemed(null);
-                            setEditing(m);
+                            setOffGoalFlag.mutate(
+                              { id: m.id, offGoal: !m.off_goal },
+                              { onSuccess: () => setNotice(offGoalDone(m, !m.off_goal)) },
+                            );
                           }}
                         >
-                          Editar
+                          {offGoalActionLabel(m)}
+                          <span className="sr-only">
+                            : aporte de <Money cents={m.amount_cents} /> em {m.asset_name}
+                          </span>
                         </Button>
-                        {m.kind === "provento" && m.related_asset_id === null ? (
+                      )}
+                      {/* O aporte do cadastro não se edita nem se desfaz: o valor é o saldo inicial do ativo. Só pode deixar de contar. */}
+                      {m.initial ? (
+                        <Button
+                          variant="ghost"
+                          // Quebra em duas linhas no celular, para a tabela não alargar.
+                          size="sm" className="whitespace-normal text-right"
+                          aria-label={`Não contar como aporte: ${m.asset_name}`}
+                          disabled={uncount.isPending}
+                          onClick={async () => {
+                            if (!(await confirm({ ...splitQuestion(uncountMessage(m)), confirmLabel: "Não contar como aporte", tone: "primary" }))) return;
+                            setNotice(null);
+                            uncount.mutate(m, { onSuccess: () => setNotice(uncountDone(m)) });
+                          }}
+                        >
+                          Não contar como aporte
+                        </Button>
+                      ) : (
+                        <>
                           <Button
-                            variant="ghost" size="sm"
-                            aria-label={`Excluir provento de ${m.asset_name}`}
-                            onClick={() => remove.mutate(m.id)}
-                          >
-                            Excluir
-                          </Button>
-                        ) : (
-                          <Button
-                            variant="ghost" size="sm"
-                            aria-label={`Desfazer ${KIND_LABEL[m.kind].toLowerCase()} de ${m.asset_name}`}
-                            disabled={undo.isPending}
-                            onClick={async () => {
-                              if (await confirm({ ...splitQuestion(undoMessage(m)), confirmLabel: "Desfazer movimento" })) {
-                                setRedeemed(null);
-                                undo.mutate(m.id);
-                              }
+                            ref={(el) => {
+                              editButtons.current.set(m.id, el);
+                            }}
+                            variant="ghost"
+                            className="px-2 py-1 text-xs"
+                            aria-label={`Editar ${KIND_LABEL[m.kind].toLowerCase()} de ${m.asset_name}`}
+                            onClick={() => {
+                              setForm(null);
+                              setNotice(null);
+                              setRedeemed(null);
+                              setEditing(m);
                             }}
                           >
-                            Desfazer
+                            Editar
                           </Button>
-                        )}
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                          {m.kind === "provento" && m.related_asset_id === null ? (
+                            <Button
+                              variant="ghost" size="sm"
+                              aria-label={`Excluir provento de ${m.asset_name}`}
+                              onClick={() => remove.mutate(m.id)}
+                            >
+                              Excluir
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="ghost" size="sm"
+                              aria-label={`Desfazer ${KIND_LABEL[m.kind].toLowerCase()} de ${m.asset_name}`}
+                              disabled={undo.isPending}
+                              onClick={async () => {
+                                if (await confirm({ ...splitQuestion(undoMessage(m)), confirmLabel: "Desfazer movimento" })) {
+                                  setRedeemed(null);
+                                  undo.mutate(m.id);
+                                }
+                              }}
+                            >
+                              Desfazer
+                            </Button>
+                          )}
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollRegion>
+        </>
       )}
     </Card>
   );

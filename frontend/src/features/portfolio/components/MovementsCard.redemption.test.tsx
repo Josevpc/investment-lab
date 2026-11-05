@@ -24,6 +24,8 @@ const summary = {
   month: "2026-10",
   by_class: [],
   reserve_cents: 0,
+  reserve_goal_cents: 0,
+  off_goal_cents: 0,
   total_cents: 0,
   proventos_cents: 0,
   redemptions_cents: 0,
@@ -45,6 +47,7 @@ const resgate: Movement = {
   initial: false,
   note: "Conserto do carro",
   in_balance: false,
+  off_goal: false,
 };
 
 const reserveAfter = {

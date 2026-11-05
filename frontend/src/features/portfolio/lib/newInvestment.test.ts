@@ -88,6 +88,7 @@ describe("não contar como aporte", () => {
     initial: true,
     note: null,
     in_balance: false,
+    off_goal: false,
   };
 
   it("a confirmação diz que o saldo não muda e como voltar atrás", () => {

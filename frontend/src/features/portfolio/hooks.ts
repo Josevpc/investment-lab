@@ -4,6 +4,7 @@ import { celebrate } from "@/shared/lib/celebrate";
 import { formatBRL } from "@/shared/lib/format";
 import { portfolioApi } from "./api";
 import { createdText, updateInputFrom } from "./lib/newInvestment";
+import { offGoalSavedNote } from "./lib/offGoal";
 import type {
   Asset,
   AssetClassInput,
@@ -176,7 +177,7 @@ export function useSaveClosing() {
       const highlight = await fetchGoalsProgress(client).then(aporteHighlight).catch(() => undefined);
       celebrate({
         title: "Aporte registrado!",
-        text: `${formatBRL(contributed)} aportados em ${count}. O dinheiro novo já soma ao investido.`,
+        text: `${formatBRL(contributed)} aportados em ${count}. O dinheiro novo já soma ao investido.${offGoalSavedNote(updates.map((u) => u.input))}`,
         highlight,
         next: { label: "Atualize os saldos dos demais ativos e feche o mês.", to: "/carteira/fechamento" },
       });
@@ -256,6 +257,18 @@ export function useUpdateMovement() {
   const invalidate = useInvalidateEverything();
   return useMutation({
     mutationFn: ({ id, input }: { id: number; input: MovementUpdateInput }) => portfolioApi.updateMovement(id, input),
+    onSuccess: invalidate,
+  });
+}
+
+/**
+ * Marca ou desmarca um aporte como fora da meta do mês. O saldo e o investido não mudam; mudam o plano do mês,
+ * o "o que falta" e a sequência. Invalida carteira (movimentos e resumo do mês) e metas (sequência e ritmo).
+ */
+export function useSetOffGoal() {
+  const invalidate = useInvalidatePortfolio();
+  return useMutation({
+    mutationFn: ({ id, offGoal }: { id: number; offGoal: boolean }) => portfolioApi.setOffGoal(id, offGoal),
     onSuccess: invalidate,
   });
 }
