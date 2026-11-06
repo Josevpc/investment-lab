@@ -343,8 +343,13 @@ def test_index_level_migration_only_adds_an_empty_table_and_keeps_existing_data(
 
     with sqlite3.connect(db) as conn:
         tables = {r[0] for r in conn.execute("select name from sqlite_master where type='table'")}
-        # Sobe até o fim: a tabela desta migração e as criadas depois dela (0016: asset_group).
-        assert tables - before == {"benchmark_index_level", "asset_group"}
+        # Sobe até o fim: a tabela desta migração e as criadas depois dela (0016: asset_group;
+        # 0018: offsite_backup_setting).
+        assert tables - before == {
+            "benchmark_index_level",
+            "asset_group",
+            "offsite_backup_setting",
+        }
         assert conn.execute("select count(*) from benchmark_index_level").fetchone()[0] == 0
         assert conn.execute("select name from asset order by id").fetchall() == [
             ("CDB",),
@@ -1163,3 +1168,79 @@ def test_off_goal_migration_downgrade_drops_only_the_column_and_can_go_up_again(
             (0,),
             (0,),
         ]
+
+
+# ---- 0018: cópia do banco fora do computador ---------------------------------------------------
+
+
+def _snapshot_of_portfolio(db):
+    with sqlite3.connect(db) as conn:
+        return {
+            table: conn.execute(f"select * from {table} order by 1").fetchall()
+            for table in ("institution", "asset", "asset_valuation", "asset_movement")
+        }
+
+
+def test_offsite_migration_adds_an_empty_table_and_keeps_existing_data(tmp_path):
+    db = tmp_path / "antigo.db"
+    config = alembic_config(sqlite_url(db))
+    command.upgrade(config, "0017")
+    _seed_before_initial(db)
+    before = _snapshot_of_portfolio(db)
+
+    command.upgrade(config, "0018")
+
+    assert _snapshot_of_portfolio(db) == before
+    with sqlite3.connect(db) as conn:
+        columns = {r[1]: r for r in conn.execute("pragma table_info(offsite_backup_setting)")}
+        assert conn.execute("select count(*) from offsite_backup_setting").fetchone()[0] == 0
+        # Nulos por padrão: cópia desligada, sem data de última cópia.
+        conn.execute("insert into offsite_backup_setting (id) values (1)")
+        row = conn.execute(
+            "select folder, last_copy_at, last_copy_file from offsite_backup_setting"
+        ).fetchone()
+        # Linha única: o banco recusa um segundo id.
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("insert into offsite_backup_setting (id) values (2)")
+    assert set(columns) == {"id", "folder", "last_copy_at", "last_copy_file"}
+    assert row == (None, None, None)
+
+
+def test_offsite_migration_can_run_again_without_losing_the_setting(tmp_path):
+    db = tmp_path / "antigo.db"
+    config = alembic_config(sqlite_url(db))
+    command.upgrade(config, "0018")
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "insert into offsite_backup_setting (id, folder, last_copy_at, last_copy_file) "
+            "values (1, 'D:/Nuvem/Backups', '2026-11-05 10:00:00', 'investment-x.db')"
+        )
+
+    command.stamp(config, "0017")
+    command.upgrade(config, "0018")  # a tabela já existe
+
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("select folder from offsite_backup_setting").fetchall() == [
+            ("D:/Nuvem/Backups",)
+        ]
+
+
+def test_offsite_migration_downgrade_drops_only_its_table_and_can_go_up_again(tmp_path):
+    db = tmp_path / "antigo.db"
+    config = alembic_config(sqlite_url(db))
+    command.upgrade(config, "0018")
+    _seed_before_initial(db)
+    before = _snapshot_of_portfolio(db)
+
+    command.downgrade(config, "0017")
+
+    with sqlite3.connect(db) as conn:
+        tables = {r[0] for r in conn.execute("select name from sqlite_master where type='table'")}
+        revision = conn.execute("select version_num from alembic_version").fetchone()[0]
+    assert "offsite_backup_setting" not in tables
+    assert _snapshot_of_portfolio(db) == before
+    assert revision == "0017"
+
+    command.upgrade(config, "0018")
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("select count(*) from offsite_backup_setting").fetchone()[0] == 0

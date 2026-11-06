@@ -66,6 +66,19 @@ export function formatDate(iso: string): string {
   return `${day}/${month}/${year}`;
 }
 
+/** "2026-10-31T14:05:09" -> "31/10/2026 14:05" (campos lidos à mão: sem fuso, sem Date). */
+export function formatDateTime(iso: string): string {
+  return `${formatDate(iso.slice(0, 10))} ${iso.slice(11, 16)}`;
+}
+
+/** Soma dias a "YYYY-MM-DD" sem sofrer com fuso nem horário de verão (a conta é feita em UTC). */
+export function addDaysISO(iso: string, days: number): string {
+  const [year, month, day] = iso.split("-").map(Number);
+  const moved = new Date(Date.UTC(year, month - 1, day + days));
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${moved.getUTCFullYear()}-${pad(moved.getUTCMonth() + 1)}-${pad(moved.getUTCDate())}`;
+}
+
 /** "2026-10-31" -> "31/10". Para frases curtas em que o período recente dispensa o ano ("desde 02/10"). */
 export function formatDayMonth(iso: string): string {
   const [, month, day] = iso.split("-");

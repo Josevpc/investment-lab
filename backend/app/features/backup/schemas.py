@@ -30,6 +30,36 @@ class ResetIn(BaseModel):
     confirm: str = ""
 
 
+class OffsiteFolderIn(BaseModel):
+    # Nulo desliga a cópia externa. Desligar ou trocar de pasta zera a data e o arquivo da última
+    # cópia, que descrevem uma cópia na pasta atual.
+    folder: str | None
+
+
+class OffsiteStatus(BaseModel):
+    """Estado da cópia fora deste computador, como a tela mostra."""
+
+    folder: str | None
+    # A pasta existe agora (pendrive/Drive desconectado = falso). Poder escrever nela só é provado
+    # ao salvar e ao copiar; ler o estado não grava nada.
+    folder_available: bool
+    # A pasta está no mesmo disco do banco: não protege contra a perda do disco.
+    same_drive: bool
+    last_copy_at: datetime | None
+    last_copy_file: str | None
+    days_since_last_copy: int | None
+    # Sem cópia nenhuma, ou a última tem mais de 7 dias.
+    stale: bool
+
+
+class OffsiteCopyResult(BaseModel):
+    file: str
+    size_bytes: int
+    copied_at: datetime
+    # Quantas cópias do app ficam na pasta depois da limpeza (no máximo 10).
+    kept: int
+
+
 class DataChangeResult(BaseModel):
     safety_backup: str | None  # arquivo de segurança criado antes de alterar os dados
     counts: dict[str, int]

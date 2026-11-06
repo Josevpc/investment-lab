@@ -14,6 +14,11 @@ describe("Notice", () => {
     expect(notice.className).toContain("jade");
   });
 
+  it("quebra palavras longas (caminho de pasta) em vez de alargar a página", () => {
+    render(<Notice>{"Pasta salva: G:\\Meu-Drive\\" + "Pasta-muito-longa-".repeat(8)}</Notice>);
+    expect(screen.getByText(/Pasta salva/).className).toContain("[overflow-wrap:anywhere]");
+  });
+
   it("sem role, é só um parágrafo", () => {
     render(<Notice>Texto de apoio</Notice>);
     expect(screen.queryByRole("status")).not.toBeInTheDocument();

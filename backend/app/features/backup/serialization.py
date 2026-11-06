@@ -10,10 +10,14 @@ from sqlalchemy.orm import Session
 from app.core.errors import InvalidInputError
 from app.registry import Base
 
+# Configuração que vale só para este computador (caminho de pasta): não vai no JSON, e restaurar ou
+# reiniciar os dados não a apaga. Quem restaura um backup não deve perder a pasta da cópia externa.
+LOCAL_TABLES = frozenset({"offsite_backup_setting"})
+
 
 def data_tables() -> list[Table]:
     """Tabelas de dados em ordem de dependência (pais antes dos filhos)."""
-    return list(Base.metadata.sorted_tables)
+    return [t for t in Base.metadata.sorted_tables if t.name not in LOCAL_TABLES]
 
 
 def to_json(value: Any) -> Any:
