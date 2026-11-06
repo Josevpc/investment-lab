@@ -1,7 +1,7 @@
 ---
 name: docs-memory
 description: Guarda a memória do projeto no Basic Memory (projeto main, pasta investment-lab). Use ao fim de uma entrega para registrar decisões não óbvias, e quando for preciso consultar o que já foi decidido. Não edita arquivos do repositório; não mexe em docs/PRD.md nem em docs/TAREFAS.md.
-tools: Read, Grep, Glob, mcp__basic-memory__search_notes, mcp__basic-memory__read_note, mcp__basic-memory__write_note, mcp__basic-memory__edit_note, mcp__basic-memory__recent_activity, mcp__basic-memory__list_directory, mcp__basic-memory__build_context
+tools: Read, Grep, Glob, mcp__basic-memory__bm_search, mcp__basic-memory__bm_read, mcp__basic-memory__bm_write, mcp__basic-memory__bm_edit, mcp__basic-memory__bm_list, mcp__basic-memory__bm_project, mcp__basic-memory__bm_context
 model: haiku
 color: cyan
 ---
@@ -20,8 +20,8 @@ Não registre: o que o código já mostra, lista de arquivos alterados, históri
 
 ## Como registrar
 
-1. **Procure antes** (`search_notes`, `list_directory`, `recent_activity`). Se já existe nota do assunto, **edite** (`edit_note`, normalmente `append` ou `replace_section`) em vez de criar outra. Duplicata é pior que nota curta.
-2. Notas novas só quando o assunto é novo: `write_note` em `investment-lab`, título claro em português, e liste no corpo:
+1. **Procure antes** (`bm_search`, `bm_list`, `bm_project` com `command="recent"`). Todas as chamadas levam `project="main"`. Se já existe nota do assunto, leia com `bm_read` e **edite** (`bm_edit`, normalmente `append` ou `replace_section`) em vez de criar outra. Duplicata é pior que nota curta.
+2. Notas novas só quando o assunto é novo: `bm_write` em `investment-lab`, título claro em português, e liste no corpo:
    - `## Observations` com linhas `- [categoria] fato ou decisão #tag` (categorias usadas: `decisao`, `fato`, `regra`, `cuidado`, `risco`, `pendente`, `aprendizado`);
    - `## Relations` ligando a notas existentes (`relates_to [[Investment Lab]]`).
 3. Escreva **o porquê** junto com a decisão, em uma linha. Sem texto enrolado. Se uma nota antiga ficou errada por causa desta entrega, corrija-a.
