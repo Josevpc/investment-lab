@@ -98,7 +98,8 @@ export type NoticeTone = "info" | "attention" | "warn" | "success";
 /** Classes do aviso, sem borda: o tom suave do fundo e o texto escrito carregam o sentido. "attention" (mel) pede atenção sem parecer erro; "warn" (argila) é para o que deu errado. */
 export function noticeClass(tone: NoticeTone = "info") {
   return cx(
-    "rounded-field px-4 py-3 text-sm text-ink",
+    // Caminhos de pasta e nomes de arquivo não têm espaços: sem isso, empurram a página para os lados no celular.
+    "rounded-field px-4 py-3 text-sm text-ink [overflow-wrap:anywhere]",
     tone === "warn" && "bg-clay-t",
     tone === "success" && "bg-jade-t",
     tone === "attention" && "bg-gold-t",

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  addDaysISO,
+  formatDateTime,
   bpsToInput,
   centsToInput,
   currentMonth,
@@ -43,6 +45,17 @@ describe("formatação", () => {
     expect(formatDate("2026-01-31")).toBe("31/01/2026");
     expect(formatDayMonth("2026-10-02")).toBe("02/10");
     expect(currentMonth(new Date(2026, 0, 5))).toBe("2026-01");
+  });
+
+  it("formata data e hora lendo os campos, sem deslocar o dia", () => {
+    expect(formatDateTime("2026-10-31T23:59:09")).toBe("31/10/2026 23:59");
+    expect(formatDateTime("2026-01-01T00:05:00")).toBe("01/01/2026 00:05");
+  });
+
+  it("soma dias a uma data virando mês e ano", () => {
+    expect(addDaysISO("2026-11-05", 7)).toBe("2026-11-12");
+    expect(addDaysISO("2026-12-28", 7)).toBe("2027-01-04");
+    expect(addDaysISO("2028-02-25", 7)).toBe("2028-03-03");
   });
 
   it("resume listas de meses, juntando sequências de 3 ou mais em faixa", () => {

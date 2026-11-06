@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { useEffect } from "react";
 import { useLocation } from "react-router-dom";
 import { PlansSection } from "@/features/allocation";
-import { BackupCard } from "@/features/backup";
+import { BackupCard, OffsiteBackupCard } from "@/features/backup";
 import { BenchmarksCard } from "@/features/benchmarks";
 import { CategoriesCard } from "@/features/portfolio";
 import { ReserveCard } from "@/features/reserve";
@@ -154,6 +154,7 @@ export function SettingsPage() {
         </Section>
         <Section id="dados" title="Dados e proteção">
           <StorageCard />
+          <OffsiteBackupCard />
           <BenchmarksCard />
           <BackupCard />
         </Section>

@@ -72,7 +72,8 @@ A referência é `design/investment-lab-ux-ui.md` e os mockups da pasta `design/
 
 | Agente | Papel | Pode editar? |
 | --- | --- | --- |
-| `project-manager` | Entende o pedido, esclarece o que for ambíguo e entrega o plano para os outros | não |
+| `router` (Haiku) | Porta de entrada barata: faz a triagem do pedido e delega a um único agente (ou ao `project-manager`, se for amplo, vago ou de vários domínios). Responde direto o que for trivial | não |
+| `project-manager` (Opus) | Entende o pedido, esclarece o que for ambíguo e entrega o plano para os outros | não |
 | `backend-engineer` | API, regras de negócio, banco e migrações | `backend/` |
 | `frontend-engineer` | Especialista em UX/UI: telas, componentes, acessibilidade | `frontend/` |
 | `qa-reviewer` | Roda as verificações e revisa o que mudou | não |
@@ -80,3 +81,7 @@ A referência é `design/investment-lab-ux-ui.md` e os mockups da pasta `design/
 | `docs-memory` | Registra decisões no Basic Memory | só Basic Memory |
 
 Fluxo: o pedido do usuário vai ao `project-manager`, que devolve um plano com tarefas por agente, ordem, o que roda em paralelo, o contrato de API entre back-end e front-end e os critérios de aceite. Os especialistas executam; `qa-reviewer` e, se houver banco, `data-guardian` revisam; `docs-memory` fecha o registro. Para o gerente rodar como sessão principal e delegar sozinho: `claude --agent project-manager`.
+
+Com o `router` (`claude --agent router`) o pedido passa antes pela triagem: pedido de um domínio só vai direto ao especialista; pedido amplo ou ambíguo vai ao `project-manager`. Subagente não aciona subagente, então nesse caminho o `project-manager` só devolve o plano e quem executa é a sessão principal. Para o fluxo inteiro automático, use o `project-manager` como sessão principal.
+
+As definições em `.claude/agents/` são lidas ao abrir a sessão; depois de editar uma, reabra a sessão ou recarregue com `/agents`. Os agentes que usam o Basic Memory chamam as ferramentas `bm_*` (`bm_search`, `bm_read`, `bm_write`, `bm_edit`, `bm_list`, `bm_project`, `bm_context`), sempre com `project="main"`.
