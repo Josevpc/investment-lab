@@ -19,6 +19,7 @@ const asset = (patch: Partial<Asset>): Asset => ({
   archived: false,
   hold_only: false,
   balance_is_net: false,
+  tax_exempt: false,
   purpose: null,
   asset_type: "acao",
   fii_segment: null,

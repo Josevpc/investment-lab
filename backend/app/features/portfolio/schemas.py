@@ -160,6 +160,8 @@ class AssetCreate(_AssetFields):
     hold_only: bool = False
     # O saldo digitado já vem sem o IR (padrão: bruto).
     balance_is_net: bool = False
+    # Renda fixa isenta de IR (LCI, LCA...); não combina com saldo líquido.
+    tax_exempt: bool = False
     # Ativo NOVO: o investido do cadastro é dinheiro que entrou agora e vira um aporte (inicial) no
     # diário. Falso: ativo que você já tinha, o valor entra só como ponto de partida.
     is_new_investment: bool = False
@@ -176,6 +178,8 @@ class AssetUpdate(_AssetFields):
     hold_only: bool | None = None
     # Omitido (ou null) mantém a marca de saldo líquido atual.
     balance_is_net: bool | None = None
+    # Omitido (ou null) mantém a marca de isento de IR.
+    tax_exempt: bool | None = None
     # Omitido (ou null) mantém a marca de ativo novo; true/false cria ou remove o aporte inicial.
     is_new_investment: bool | None = None
 
@@ -452,6 +456,7 @@ class AssetOut(BaseModel):
     account_id: int | None
     hold_only: bool  # manter posição: não recebe aportes novos
     balance_is_net: bool  # o saldo digitado já vem com o IR descontado
+    tax_exempt: bool  # renda fixa isenta de IR (LCI, LCA...)
     # Ativo novo: tem aporte inicial no diário (valor e data dele; nulos se o ativo é antigo).
     is_new_investment: bool
     initial_contribution_cents: int | None

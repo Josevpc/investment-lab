@@ -43,6 +43,8 @@ export interface Asset {
   hold_only: boolean;
   /** O saldo digitado já vem com o IR descontado (ex.: Caixinha do Mercado Pago); falso = bruto. */
   balance_is_net: boolean;
+  /** Renda fixa isenta de IR (LCI, LCA, CRI, CRA, debênture incentivada): o saldo bruto já é o que a pessoa recebe. */
+  tax_exempt: boolean;
   purpose: Purpose | null;
   asset_type: AssetType | null;
   fii_segment: FiiSegment | null;
@@ -83,6 +85,8 @@ export interface AssetFields {
   hold_only: boolean;
   /** Só rotula o desempenho contra o CDI: o app não calcula imposto. Vale só para renda fixa. */
   balance_is_net: boolean;
+  /** Só renda fixa. O back-end recusa (422) isento com saldo líquido: no máximo uma das duas marcas. */
+  tax_exempt: boolean;
 }
 
 export interface AssetCreateInput extends AssetFields {

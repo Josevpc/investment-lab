@@ -84,3 +84,35 @@ def solve_pct_of_cdi(
 def to_bps(value: Decimal) -> int:
     """Fração -> pontos-base, arredondando meio para cima (0,012 -> 120)."""
     return int((value * 10_000).to_integral_value(rounding=ROUND_HALF_UP))
+
+
+# ---- imposto de renda: o % do CDI de ativos isentos ou com saldo líquido -------------------------
+
+# Tabela regressiva do IR na renda fixa (Lei 11.033/2004), conferida em 06/11/2026: 22,5% até 180
+# dias, 20% até 360, 17,5% até 720 e 15% acima disso. O app não sabe o prazo de cada aplicação:
+# quem compara escolhe a alíquota na tela.
+IR_RATES_BPS = (2250, 2000, 1750, 1500)
+DEFAULT_IR_RATE_BPS = 1500
+IR_RATES_SOURCE = (
+    "Tabela regressiva do IR na renda fixa (Lei 11.033/2004), conferida em 06/11/2026."
+)
+INVALID_IR_RATE = "Alíquota inválida: use 22,5%, 20%, 17,5% ou 15%."
+
+
+def net_pct_of_cdi(
+    pct: Decimal, ir_rate_bps: int, *, tax_exempt: bool, balance_is_net: bool
+) -> Decimal:
+    """O `k` medido, dito em termos de um ativo bruto e tributado (o CDI é bruto).
+
+    Quem não paga imposto (isento) ou já tem o imposto fora do saldo (saldo líquido) rendeu o mesmo
+    que um bruto que rendesse `k / (1 - alíquota)` do CDI. Quem tem saldo bruto fica como está.
+    Recebe e devolve o valor em Decimal: o arredondamento para bps é um só, no fim.
+    """
+    if not (tax_exempt or balance_is_net):
+        return pct
+    return pct / (ONE - Decimal(ir_rate_bps) / 10_000)
+
+
+def net_cdi_bps(cdi_bps: int, ir_rate_bps: int) -> int:
+    """O CDI do período depois do IR (`CDI x (1 - alíquota)`), em pontos-base, meio para cima."""
+    return to_bps(Decimal(cdi_bps) * (10_000 - ir_rate_bps) / 10_000 / 10_000)

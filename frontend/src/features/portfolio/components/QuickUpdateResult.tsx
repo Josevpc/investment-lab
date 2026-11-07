@@ -102,6 +102,7 @@ export function QuickUpdateResult({
                     <span className="block text-xs font-normal text-slate-500 dark:text-slate-400">
                       {asset.institution_name}
                       {asset.class_key === "renda_fixa" && asset.balance_is_net && " · saldo líquido de IR"}
+                      {asset.class_key === "renda_fixa" && asset.tax_exempt && " · isento de IR"}
                     </span>
                   </th>
                   <td className="tabular whitespace-nowrap py-2 text-right">

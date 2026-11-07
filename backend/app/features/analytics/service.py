@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from app.core.errors import NotFoundError
+from app.core.errors import InvalidInputError, NotFoundError
 from app.features.allocation.service import (
     effective_targets,
     fully_held_ids,
@@ -13,7 +13,17 @@ from app.features.allocation.service import (
     split_amounts,
 )
 from app.features.analytics import domain
-from app.features.analytics.cdi_equivalent import Flow, growth, solve_pct_of_cdi
+from app.features.analytics.cdi_equivalent import (
+    DEFAULT_IR_RATE_BPS,
+    INVALID_IR_RATE,
+    IR_RATES_BPS,
+    IR_RATES_SOURCE,
+    Flow,
+    growth,
+    net_cdi_bps,
+    net_pct_of_cdi,
+    solve_pct_of_cdi,
+)
 from app.features.analytics.cdi_equivalent import to_bps as to_decimal_bps
 from app.features.analytics.performance import (
     Observation,
@@ -44,6 +54,7 @@ from app.features.benchmarks.service import get_status as benchmark_status
 from app.features.contributions.service import list_contributions
 from app.features.portfolio.movements import list_movements
 from app.features.portfolio.service import (
+    FIXED_INCOME_KEY,
     class_current_values,
     class_hold_status,
     get_asset,
@@ -152,7 +163,6 @@ INSUFFICIENT = (
 GAP_TOLERANCE = timedelta(days=5)
 STALE_AFTER_DAYS = 10  # saldo mais velho que isso na data final vira aviso
 GROUP_SCOPE_PREFIX = "group:"  # escopo de um grupo de categorias: "group:<id>"
-FIXED_INCOME_KEY = "renda_fixa"  # chave da categoria inicial; o Ibovespa não se aplica a ela
 NO_IBOVESPA = "Ainda não há dados do Ibovespa. Atualize em Configurações → Dados e proteção."
 NO_CDI = (
     "Ainda não há CDI diário baixado para este período. Atualize em Configurações → "
@@ -391,7 +401,10 @@ CDI_METHOD = (
     "Procuramos o % do CDI que, aplicado dia a dia, leva o saldo inicial mais os aportes (cada um "
     "a partir da sua data) ao saldo final. Usa os saldos que você digitou, como estão na conta "
     "(brutos ou já sem o IR, conforme marcado em cada ativo), e o CDI diário do Banco Central. O "
-    "app não calcula imposto: o % do CDI de um ativo líquido não é comparável ao de um bruto. "
+    "app não calcula imposto sobre os saldos: o % do CDI medido é o dos saldos como estão. Para "
+    "comparar um ativo isento de IR (LCI, LCA) ou de saldo líquido com um bruto, o equivalente "
+    "bruto divide esse % por (1 - alíquota), com a alíquota da tabela regressiva que você "
+    "escolher; o CDI depois do IR é o CDI vezes (1 - alíquota). "
     "O período conta de depois do dia inicial até o dia final; mudar o "
     "dia de um aporte em um dia útil muda o resultado em um período curto. Para renda variável, "
     "o Ibovespa é comparado ponto a ponto entre as datas inicial e final (último pregão em ou "
@@ -465,10 +478,24 @@ def _asset_ibovespa(
     return ibovespa, vs, covered
 
 
+def _check_ir_rate(ir_rate_bps: int) -> None:
+    if ir_rate_bps not in IR_RATES_BPS:
+        raise InvalidInputError(INVALID_IR_RATE)
+
+
 def get_asset_performance(
-    session: Session, asset_id: int, start: date | None = None, end: date | None = None
+    session: Session,
+    asset_id: int,
+    start: date | None = None,
+    end: date | None = None,
+    ir_rate_bps: int = DEFAULT_IR_RATE_BPS,
 ) -> AssetPerformanceOut:
-    """Quanto % do CDI o ativo rendeu no período. Sem datas, vale do primeiro ao último saldo."""
+    """Quanto % do CDI o ativo rendeu no período. Sem datas, vale do primeiro ao último saldo.
+
+    `ir_rate_bps` só alimenta os campos de IR (equivalente bruto e CDI depois do imposto): o
+    resto da medição não depende dele.
+    """
+    _check_ir_rate(ir_rate_bps)
     asset = get_asset(session, asset_id)
     observed = sorted(
         (v for v in list_valuations(session, asset_id) if v.observed), key=lambda v: v.date
@@ -476,6 +503,8 @@ def get_asset_performance(
     by_date = {v.date: v for v in observed}
     dates = list(by_date)
     contracted = asset.rate_bps if asset.indexer == "CDI" else None
+    # Imposto de renda só se aplica à renda fixa; fora dela os campos de IR ficam vazios.
+    rate = ir_rate_bps if asset.class_key == FIXED_INCOME_KEY else None
     warnings: list[str] = []
 
     def empty(message: str) -> AssetPerformanceOut:
@@ -487,6 +516,7 @@ def get_asset_performance(
             indexer=asset.indexer,
             contracted_pct_bps=contracted,
             balance_is_net=asset.balance_is_net,
+            tax_exempt=asset.tax_exempt,
             dates=dates,
             start_date=None,
             end_date=None,
@@ -499,6 +529,10 @@ def get_asset_performance(
             return_bps=None,
             cdi_bps=None,
             pct_of_cdi_bps=None,
+            ir_rate_bps=rate,
+            net_cdi_bps=None,
+            net_pct_of_cdi_bps=None,
+            ir_rates_source=IR_RATES_SOURCE,
             vs_contracted_bps=None,
             steps=[],
             warnings=[message],
@@ -567,6 +601,20 @@ def get_asset_performance(
         )
 
     pct_bps = to_decimal_bps(total["pct"]) if total["pct"] is not None else None
+    # O equivalente bruto parte do % sem arredondar: arredondar duas vezes erraria o último bps.
+    net_pct_bps = net_cdi = None
+    if rate is not None:
+        if total["pct"] is not None:
+            net_pct_bps = to_decimal_bps(
+                net_pct_of_cdi(
+                    total["pct"],
+                    rate,
+                    tax_exempt=asset.tax_exempt,
+                    balance_is_net=asset.balance_is_net,
+                )
+            )
+        if total["cdi_bps"] is not None:
+            net_cdi = net_cdi_bps(total["cdi_bps"], rate)
     return AssetPerformanceOut(
         asset_id=asset.id,
         asset_name=asset.name,
@@ -575,6 +623,7 @@ def get_asset_performance(
         indexer=asset.indexer,
         contracted_pct_bps=contracted,
         balance_is_net=asset.balance_is_net,
+        tax_exempt=asset.tax_exempt,
         dates=dates,
         start_date=start_date,
         end_date=end_date,
@@ -587,6 +636,10 @@ def get_asset_performance(
         return_bps=total["return_bps"],
         cdi_bps=total["cdi_bps"],
         pct_of_cdi_bps=pct_bps,
+        ir_rate_bps=rate,
+        net_cdi_bps=net_cdi,
+        net_pct_of_cdi_bps=net_pct_bps,
+        ir_rates_source=IR_RATES_SOURCE,
         vs_contracted_bps=(pct_bps - contracted) if pct_bps is not None and contracted else None,
         steps=steps,
         warnings=warnings,
@@ -599,11 +652,15 @@ def get_asset_performance(
 
 
 def list_assets_vs_cdi(
-    session: Session, start: date | None = None, end: date | None = None
+    session: Session,
+    start: date | None = None,
+    end: date | None = None,
+    ir_rate_bps: int = DEFAULT_IR_RATE_BPS,
 ) -> list[AssetPerformanceOut]:
-    """O mesmo cálculo para cada ativo não arquivado, no mesmo período."""
+    """O mesmo cálculo para cada ativo não arquivado, no mesmo período e com a mesma alíquota."""
+    _check_ir_rate(ir_rate_bps)  # também recusa quando não há nenhum ativo
     return [
-        get_asset_performance(session, a.id, start, end)
+        get_asset_performance(session, a.id, start, end, ir_rate_bps)
         for a in list_assets(session)
         if not a.archived
     ]

@@ -7,6 +7,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import date
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -71,7 +72,8 @@ DEFAULT_CLASSES = [
 TYPE_LABELS = {"acao": "Ações", "etf": "ETFs", "fii": "Fundos imobiliários"}
 SEGMENT_LABELS = {"papel": "Papel", "tijolo": "Tijolo", "sem_segmento": "Sem segmento"}
 # Categorias em que o tipo (ação, ETF, FII) não se aplica; o resto pede o tipo.
-FIXED_INCOME_AND_CRYPTO = {"renda_fixa", "cripto"}
+FIXED_INCOME_KEY = "renda_fixa"
+FIXED_INCOME_AND_CRYPTO = {FIXED_INCOME_KEY, "cripto"}
 
 # Cores sugeridas para categorias novas, em ordem de uso.
 PALETTE = ["#4fb3bf", "#d9728a", "#9bbf5a", "#b89c7a", "#7d8ccf", "#e0795b", "#5fa8a0", "#c78fd0"]
@@ -441,6 +443,7 @@ def _asset_out(
         # banco guarde uma marca antiga (a migração marcou todos os ativos da categoria mantida).
         hold_only=asset.hold_only and asset.purpose != "reserva",
         balance_is_net=asset.balance_is_net,
+        tax_exempt=asset.tax_exempt,
         is_new_investment=initial_movement is not None,
         initial_contribution_cents=initial_movement.amount_cents if initial_movement else None,
         initial_contribution_date=initial_movement.date if initial_movement else None,
@@ -525,9 +528,38 @@ def _check_hold(data: AssetCreate | AssetUpdate) -> None:
         )
 
 
+def check_tax_exempt(is_fixed_income: bool, tax_exempt: bool, balance_is_net: bool) -> None:
+    """Isento de IR só existe na renda fixa, e o saldo de um isento não tem imposto a descontar."""
+    if tax_exempt and not is_fixed_income:
+        raise InvalidInputError("Só ativos de renda fixa podem ser isentos de IR.")
+    if tax_exempt and balance_is_net:
+        raise InvalidInputError(
+            "Ativo isento não tem saldo líquido de IR: o saldo já é o que você recebe."
+        )
+
+
+def check_assets_tax_exempt(session: Session) -> None:
+    """Confere a regra do isento em todos os ativos gravados (usado ao restaurar um backup).
+
+    Um arquivo editado à mão poderia trazer isento fora da renda fixa ou junto com saldo líquido,
+    e isso distorceria a comparação com o CDI. Lê só colunas: não depende de objetos em memória.
+    """
+    rows = session.execute(
+        select(Asset.name, Asset.tax_exempt, Asset.balance_is_net, AssetClass.key).join(
+            AssetClass, Asset.class_id == AssetClass.id
+        )
+    )
+    for name, tax_exempt, balance_is_net, class_key in rows:
+        try:
+            check_tax_exempt(class_key == FIXED_INCOME_KEY, tax_exempt, balance_is_net)
+        except InvalidInputError as exc:
+            raise InvalidInputError(f'Ativo "{name}": {exc.message}') from exc
+
+
 def create_asset(session: Session, data: AssetCreate) -> AssetOut:
     _check_hold(data)
     asset_class = _resolve_class(session, data.class_key)
+    check_tax_exempt(asset_class.key == FIXED_INCOME_KEY, data.tax_exempt, data.balance_is_net)
     institution = require_institution(session, data.institution_id)
     asset = Asset(
         name=data.name.strip(),
@@ -545,6 +577,7 @@ def create_asset(session: Session, data: AssetCreate) -> AssetOut:
         account_id=_resolve_account(session, institution, data.account_id),
         hold_only=data.hold_only,
         balance_is_net=data.balance_is_net,
+        tax_exempt=data.tax_exempt,
     )
     try:
         session.add(asset)
@@ -577,6 +610,19 @@ def update_asset(session: Session, asset_id: int, data: AssetUpdate) -> AssetOut
         session, data.class_key, allow_archived=data.class_key == asset.asset_class.key
     )
     institution = require_institution(session, data.institution_id)
+    # As marcas omitidas ficam como estão, salvo ao sair da renda fixa: lá o isento não existe e o
+    # saldo líquido era da renda fixa, então as duas caem. Marca enviada vale como veio.
+    is_fixed_income = asset_class.key == FIXED_INCOME_KEY
+    left_fixed_income = asset.asset_class.key == FIXED_INCOME_KEY and not is_fixed_income
+    tax_exempt = (
+        asset.tax_exempt and is_fixed_income if data.tax_exempt is None else data.tax_exempt
+    )
+    balance_is_net = (
+        asset.balance_is_net and not left_fixed_income
+        if data.balance_is_net is None
+        else data.balance_is_net
+    )
+    check_tax_exempt(is_fixed_income, tax_exempt, balance_is_net)
     account_id = _account_for_update(session, asset, institution, data.account_id)
     asset.account_id = account_id
     asset.name = data.name.strip()
@@ -594,8 +640,8 @@ def update_asset(session: Session, asset_id: int, data: AssetUpdate) -> AssetOut
         asset.hold_only = asset.hold_only and not data.archived and data.purpose != "reserva"
     else:
         asset.hold_only = data.hold_only
-    if data.balance_is_net is not None:
-        asset.balance_is_net = data.balance_is_net
+    asset.balance_is_net = balance_is_net
+    asset.tax_exempt = tax_exempt
     asset.purpose = data.purpose
     asset.asset_type = data.asset_type
     asset.fii_segment = data.fii_segment

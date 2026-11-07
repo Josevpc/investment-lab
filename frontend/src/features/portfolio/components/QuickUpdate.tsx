@@ -157,6 +157,7 @@ export function QuickUpdate({ assets }: { assets: Asset[] }) {
                           <p className="text-xs text-slate-500 dark:text-slate-400">
                             {asset.class_name} · saldo anterior <Money cents={asset.current_cents} /> · {updatedLabel(days)}
                             {asset.class_key === "renda_fixa" && asset.balance_is_net && " · saldo líquido de IR"}
+                            {asset.class_key === "renda_fixa" && asset.tax_exempt && " · isento de IR"}
                           </p>
                         </div>
 

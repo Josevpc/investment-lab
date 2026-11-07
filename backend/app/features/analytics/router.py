@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_session
 from app.features.analytics import service
+from app.features.analytics.cdi_equivalent import DEFAULT_IR_RATE_BPS
 from app.features.analytics.schemas import (
     AssetPerformanceOut,
     PerformanceOut,
@@ -36,15 +37,17 @@ def asset_vs_cdi(
     asset_id: int,
     from_: date | None = Query(default=None, alias="from"),
     to: date | None = None,
+    ir_rate_bps: int = DEFAULT_IR_RATE_BPS,
     session: Session = Depends(get_session),
 ):
-    return service.get_asset_performance(session, asset_id, from_, to)
+    return service.get_asset_performance(session, asset_id, from_, to, ir_rate_bps)
 
 
 @router.get("/assets-vs-cdi", response_model=list[AssetPerformanceOut])
 def assets_vs_cdi(
     from_: date | None = Query(default=None, alias="from"),
     to: date | None = None,
+    ir_rate_bps: int = DEFAULT_IR_RATE_BPS,
     session: Session = Depends(get_session),
 ):
-    return service.list_assets_vs_cdi(session, from_, to)
+    return service.list_assets_vs_cdi(session, from_, to, ir_rate_bps)

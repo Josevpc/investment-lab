@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from app.core.migrate import upgrade_to_head
+from app.core.migrate import head_revision, upgrade_to_head
 from app.core.protection import APP_HEADER
 from app.features.backup import domain
 
@@ -431,7 +431,7 @@ def test_copy_writes_a_consistent_file_that_opens_and_passes_the_check(
         assert conn.execute("pragma integrity_check").fetchall() == [("ok",)]
         assert conn.execute("select name from institution").fetchall() == [("Banco da Cópia",)]
         revision = conn.execute("select version_num from alembic_version").fetchone()[0]
-    assert revision == "0018"
+    assert revision == head_revision()
     # Só a cópia na pasta: nada de arquivo de trabalho nem de prova.
     assert [p.name for p in configured.iterdir()] == [expected]
 

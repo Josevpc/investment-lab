@@ -46,6 +46,59 @@ const INDEXERS: { value: Indexer; label: string }[] = [
   { value: "OUTRO", label: "Outro" },
 ];
 
+type TaxMode = "gross" | "net" | "exempt";
+
+const TAX_OPTIONS: { value: TaxMode; label: string; hint: string }[] = [
+  {
+    value: "gross",
+    label: "Tributado, saldo bruto",
+    hint: "O saldo que você digita ainda tem o IR dentro, como no Tesouro Reserva. É o mais comum.",
+  },
+  {
+    value: "net",
+    label: "Tributado, saldo já líquido de IR",
+    hint: "O saldo que você digita já vem com o imposto descontado, como na Caixinha do Mercado Pago.",
+  },
+  {
+    value: "exempt",
+    label: "Isento de IR",
+    hint: "LCI, LCA, CRI, CRA e debêntures incentivadas: o saldo bruto já é o que você recebe.",
+  },
+];
+
+/** Opção de rádio com título e dica: o nome acessível é só o título, e a dica vai como descrição. */
+function TaxOption({ option, checked, onSelect }: { option: (typeof TAX_OPTIONS)[number]; checked: boolean; onSelect: () => void }) {
+  const id = useId();
+  return (
+    <label
+      className={cx(
+        "flex min-h-10 cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 text-sm transition",
+        checked
+          ? "border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-400/10"
+          : "border-slate-300 hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800",
+      )}
+    >
+      <input
+        type="radio"
+        name="tax-treatment"
+        checked={checked}
+        onChange={onSelect}
+        aria-labelledby={`${id}-label`}
+        aria-describedby={`${id}-hint`}
+        className="mt-0.5 size-4 shrink-0 accent-blue-500"
+      />
+      <span>
+        <span id={`${id}-label`} className="block font-medium">
+          {option.label}
+        </span>
+        <span id={`${id}-hint`} className="block text-xs text-slate-600 dark:text-slate-400">
+          {option.hint}
+        </span>
+      </span>
+    </label>
+  );
+}
+
 /** Igual ao padrão do back-end: a conta ativa mais antiga (menor id) da instituição. */
 function defaultAccountId(accounts: Account[], institutionId: number | ""): number | "" {
   const ids = accounts.filter((a) => a.institution_id === institutionId && !a.archived).map((a) => a.id);
@@ -81,7 +134,7 @@ export function AssetForm({ initial, classes: allClasses, institutions, accounts
   const [archived, setArchived] = useState(initial?.archived ?? false);
   const [isReserve, setIsReserve] = useState(initial?.purpose === "reserva");
   const [holdOnly, setHoldOnly] = useState(initial?.hold_only ?? false);
-  const [balanceIsNet, setBalanceIsNet] = useState(initial?.balance_is_net ?? false);
+  const [taxMode, setTaxMode] = useState<TaxMode>(initial?.tax_exempt ? "exempt" : initial?.balance_is_net ? "net" : "gross");
   const [assetType, setAssetType] = useState<AssetType | "">(initial?.asset_type ?? "");
   const [fiiSegment, setFiiSegment] = useState<FiiSegment | "">(initial?.fii_segment ?? "");
   // No cadastro começa sem escolha: novo ou antigo muda os aportes do mês, então a pessoa decide.
@@ -172,8 +225,10 @@ export function AssetForm({ initial, classes: allClasses, institutions, accounts
       archived,
       purpose: isReserve ? "reserva" : null,
       hold_only: holdToSave,
-      // O IR só entra na conversa da renda fixa: ao trocar de categoria, a marca não fica escondida.
-      balance_is_net: isFixedIncome && balanceIsNet,
+      // O IR só entra na conversa da renda fixa: ao trocar de categoria, as marcas não ficam escondidas.
+      // A escolha é única, então o back-end nunca recebe isento com saldo líquido (422).
+      balance_is_net: isFixedIncome && taxMode === "net",
+      tax_exempt: isFixedIncome && taxMode === "exempt",
       asset_type: showType && assetType !== "" ? assetType : null,
       fii_segment: isFii && fiiSegment !== "" ? fiiSegment : null,
       // Na edição, só manda quando a pessoa trocou (null mantém).
@@ -255,13 +310,15 @@ export function AssetForm({ initial, classes: allClasses, institutions, accounts
             <Field label="Vencimento" className="sm:col-span-2">
               <input type="date" className={inputClass} value={maturity} onChange={(e) => setMaturity(e.target.value)} />
             </Field>
-            <Switch
-              className="sm:col-span-2"
-              label="Saldo já com o IR descontado"
-              checked={balanceIsNet}
-              onChange={setBalanceIsNet}
-              hint="Ligue se o saldo que você digita já vem líquido na conta, como na Caixinha do Mercado Pago. Desligado, vale como bruto, como no Tesouro Reserva. O app não calcula imposto: usa isso só para rotular o % do CDI."
-            />
+            <fieldset className="space-y-2 sm:col-span-2">
+              <legend className="mb-1 text-sm font-medium text-slate-700 dark:text-slate-300">Imposto de renda</legend>
+              {TAX_OPTIONS.map((option) => (
+                <TaxOption key={option.value} option={option} checked={taxMode === option.value} onSelect={() => setTaxMode(option.value)} />
+              ))}
+              <p className="text-xs text-slate-600 dark:text-slate-400">
+                O app não calcula o imposto devido: usa esta escolha só para comparar o rendimento com o CDI depois do IR.
+              </p>
+            </fieldset>
           </>
         ) : (
           <>

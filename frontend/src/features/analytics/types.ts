@@ -141,6 +141,16 @@ export interface AssetVsCdi {
   contracted_pct_bps: number | null;
   /** Os saldos digitados já vêm sem o IR: o % do CDI não é comparável ao de um ativo bruto. */
   balance_is_net: boolean;
+  /** Renda fixa isenta de IR: o saldo bruto já é o que a pessoa recebe. */
+  tax_exempt: boolean;
+  /** Alíquota de IR usada na comparação (2250, 2000, 1750 ou 1500); null fora da renda fixa. */
+  ir_rate_bps: number | null;
+  /** CDI do período depois do IR na alíquota escolhida. */
+  net_cdi_bps: number | null;
+  /** Rendimento líquido de IR sobre o CDI líquido: 12000 = 120% do CDI líquido. */
+  net_pct_of_cdi_bps: number | null;
+  /** De onde vem a tabela regressiva (texto com a data da fonte). */
+  ir_rates_source: string;
   /** Datas com saldo digitado: as opções de início e fim do período. */
   dates: string[];
   start_date: string | null;

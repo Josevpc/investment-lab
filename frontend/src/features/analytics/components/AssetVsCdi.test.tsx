@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssetVsCdi as AssetVsCdiData } from "../types";
 import { AssetVsCdi } from "./AssetVsCdi";
 
@@ -13,6 +14,11 @@ function data(overrides: Partial<AssetVsCdiData>): AssetVsCdiData {
     indexer: null,
     contracted_pct_bps: null,
     balance_is_net: false,
+    tax_exempt: false,
+    ir_rate_bps: null,
+    net_cdi_bps: null,
+    net_pct_of_cdi_bps: null,
+    ir_rates_source: "",
     dates: ["2026-03-31", "2026-09-30"],
     start_date: "2026-03-31",
     end_date: "2026-09-30",
@@ -38,17 +44,18 @@ function data(overrides: Partial<AssetVsCdiData>): AssetVsCdiData {
 }
 
 function renderMetric(payload: AssetVsCdiData) {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => new Response(JSON.stringify(payload), { status: 200 })),
-  );
+  const fetchMock = vi.fn(async (_url: string) => new Response(JSON.stringify(payload), { status: 200 }));
+  vi.stubGlobal("fetch", fetchMock);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
       <AssetVsCdi assetId={payload.asset_id} />
     </QueryClientProvider>,
   );
+  return fetchMock;
 }
+
+beforeEach(() => localStorage.clear());
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -72,20 +79,74 @@ const steps = [
   step("2026-09-30", "2026-10-15", 50, null, null),
 ];
 
-describe("Saldo bruto ou líquido de IR (detalhe do ativo)", () => {
+describe("Saldo bruto, líquido ou isento de IR (detalhe do ativo)", () => {
   const fixedIncome = (overrides: Partial<AssetVsCdiData>) =>
-    data({ class_key: "renda_fixa", asset_type: null, indexer: "CDI", pct_of_cdi_bps: 11_800, contracted_pct_bps: 12_000, vs_contracted_bps: -200, ibovespa_bps: null, vs_ibovespa_bps: null, ...overrides });
+    data({
+      class_key: "renda_fixa",
+      asset_type: null,
+      indexer: "CDI",
+      pct_of_cdi_bps: 11_800,
+      contracted_pct_bps: 12_000,
+      vs_contracted_bps: -200,
+      ir_rate_bps: 1500,
+      net_cdi_bps: 442,
+      net_pct_of_cdi_bps: 10_300,
+      ibovespa_bps: null,
+      vs_ibovespa_bps: null,
+      ...overrides,
+    });
+  const metricOf = async (label: string) => (await screen.findByText(label)).parentElement!;
 
-  it("saldo líquido: explica que o % do CDI não é comparável ao de um ativo bruto", async () => {
+  it("saldo líquido: manda comparar pela linha do % do CDI líquido e diz que não desconta de novo", async () => {
     renderMetric(fixedIncome({ balance_is_net: true }));
     expect(await screen.findByText(/já vem sem o IR/)).toBeInTheDocument();
     expect(screen.getByText(/não é comparável ao de um ativo com saldo bruto/)).toBeInTheDocument();
+    expect(screen.getByText(/Compare pela linha "% do CDI líquido", que não desconta o imposto de novo/)).toBeInTheDocument();
+    expect(await metricOf("% do CDI líquido")).toHaveTextContent("saldo já líquido");
   });
 
-  it("saldo bruto: sem aviso", async () => {
+  it("saldo bruto: sem aviso, com o % do CDI líquido e a alíquota usada", async () => {
     renderMetric(fixedIncome({ balance_is_net: false }));
     expect(await screen.findByText("% do CDI realizado")).toBeInTheDocument();
     expect(screen.queryByText(/já vem sem o IR/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Isento de IR:/)).not.toBeInTheDocument();
+
+    const net = await metricOf("% do CDI líquido");
+    expect(net).toHaveTextContent("103%");
+    expect(net).toHaveTextContent("rendimento e CDI com IR de 15% (simulação)");
+    const cdi = await metricOf("CDI líquido no período");
+    expect(cdi).toHaveTextContent("+4,42%");
+    expect(cdi).toHaveTextContent("CDI depois de IR de 15%");
+  });
+
+  it("isento: diz que o saldo bruto já é o que a pessoa recebe e não pede comparação com saldo bruto", async () => {
+    renderMetric(fixedIncome({ tax_exempt: true, pct_of_cdi_bps: 9_200, net_pct_of_cdi_bps: 9_200 }));
+    expect(await screen.findByText("Isento de IR: o saldo bruto já é o que você recebe.")).toBeInTheDocument();
+    expect(screen.queryByText(/já vem sem o IR/)).not.toBeInTheDocument();
+    const net = await metricOf("% do CDI líquido");
+    expect(net).toHaveTextContent("92%");
+    expect(net).toHaveTextContent("isento de IR");
+  });
+
+  it("renda fixa mostra o seletor de alíquota e a escolha refaz a consulta e fica guardada", async () => {
+    const fetchMock = renderMetric(fixedIncome({}));
+    const select = await screen.findByRole("combobox", { name: "Alíquota de IR para comparar" });
+    expect(select).toHaveValue("1500");
+    expect(new URL(fetchMock.mock.calls[0][0], "http://app").searchParams.get("ir_rate_bps")).toBe("1500");
+
+    await userEvent.setup().selectOptions(select, "2000");
+    await waitFor(() =>
+      expect(new URL(fetchMock.mock.calls.at(-1)![0], "http://app").searchParams.get("ir_rate_bps")).toBe("2000"),
+    );
+    expect(localStorage.getItem("il-ir-rate")).toBe("2000");
+  });
+
+  it("fora da renda fixa não há seletor nem linhas líquidas", async () => {
+    renderMetric(data({}));
+    await screen.findByText("Variação contra o CDI");
+    expect(screen.queryByRole("combobox", { name: "Alíquota de IR para comparar" })).not.toBeInTheDocument();
+    expect(screen.queryByText("% do CDI líquido")).not.toBeInTheDocument();
+    expect(screen.queryByText("CDI líquido no período")).not.toBeInTheDocument();
   });
 });
 

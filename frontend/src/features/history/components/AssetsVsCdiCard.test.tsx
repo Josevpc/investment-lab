@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssetVsCdiResult } from "@/features/analytics";
 import { AssetsVsCdiCard } from "./AssetsVsCdiCard";
 
@@ -13,6 +14,11 @@ function asset(overrides: Partial<AssetVsCdiResult>): AssetVsCdiResult {
     indexer: null,
     contracted_pct_bps: null,
     balance_is_net: false,
+    tax_exempt: false,
+    ir_rate_bps: null,
+    net_cdi_bps: null,
+    net_pct_of_cdi_bps: null,
+    ir_rates_source: "",
     dates: ["2026-03-31", "2026-09-30"],
     start_date: "2026-03-31",
     end_date: "2026-09-30",
@@ -38,17 +44,18 @@ function asset(overrides: Partial<AssetVsCdiResult>): AssetVsCdiResult {
 }
 
 function renderCard(assets: AssetVsCdiResult[]) {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => new Response(JSON.stringify(assets), { status: 200 })),
-  );
+  const fetchMock = vi.fn(async (_url: string) => new Response(JSON.stringify(assets), { status: 200 }));
+  vi.stubGlobal("fetch", fetchMock);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
       <AssetsVsCdiCard range="all" />
     </QueryClientProvider>,
   );
+  return fetchMock;
 }
+
+beforeEach(() => localStorage.clear());
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -57,51 +64,204 @@ afterEach(() => {
 const variableTable = async () =>
   screen.findByRole("table", { name: /renda variável e cripto contra o CDI e contra o Ibovespa/ });
 
+const SOURCE = "Tabela regressiva do IR na renda fixa (Lei 11.033/2004), conferida em 06/11/2026.";
+
 const fixed = (overrides: Partial<AssetVsCdiResult>) =>
-  asset({ class_key: "renda_fixa", asset_type: null, indexer: "CDI", pct_of_cdi_bps: 11_800, ibovespa_bps: null, vs_ibovespa_bps: null, ...overrides });
+  asset({
+    class_key: "renda_fixa",
+    asset_type: null,
+    indexer: "CDI",
+    pct_of_cdi_bps: 11_800,
+    ir_rate_bps: 1500,
+    net_cdi_bps: 442,
+    net_pct_of_cdi_bps: 10_300,
+    ir_rates_source: SOURCE,
+    ibovespa_bps: null,
+    vs_ibovespa_bps: null,
+    ...overrides,
+  });
+
+const exempt = (overrides: Partial<AssetVsCdiResult>) =>
+  fixed({ tax_exempt: true, asset_name: "LCI Banco Y", net_pct_of_cdi_bps: 9_200, pct_of_cdi_bps: 9_200, ...overrides });
 
 const fixedTable = async () => screen.findByRole("table", { name: /Rendimento de cada ativo de renda fixa/ });
+const rowOf = (table: HTMLElement, name: RegExp) => within(table).getByRole("row", { name });
 
-describe("Renda fixa frente ao CDI: saldo bruto ou líquido", () => {
-  it("diz em cada linha se o saldo é bruto ou líquido de IR", async () => {
+describe("Renda fixa frente ao CDI: isentos e tributados", () => {
+  it("separa em dois grupos, Isentos de IR e Tributados, cada ativo no seu", async () => {
     renderCard([
-      fixed({ asset_id: 1, asset_name: "Tesouro Reserva", balance_is_net: false }),
-      fixed({ asset_id: 2, asset_name: "Caixinha", balance_is_net: true }),
+      fixed({ asset_id: 1, asset_name: "Tesouro Reserva" }),
+      exempt({ asset_id: 2 }),
+      fixed({ asset_id: 3, asset_name: "CDB Banco X" }),
     ]);
 
     const table = await fixedTable();
-    expect(within(within(table).getByRole("row", { name: /Tesouro Reserva/ })).getByText("saldo bruto")).toBeInTheDocument();
-    expect(within(within(table).getByRole("row", { name: /Caixinha/ })).getByText("saldo líquido de IR")).toBeInTheDocument();
+    const groups = Array.from(table.querySelectorAll('th[scope="rowgroup"]'));
+    expect(groups.map((g) => g.textContent)).toEqual(["Isentos de IR", "Tributados"]);
+
+    const bodies = table.querySelectorAll("tbody");
+    expect(bodies).toHaveLength(2);
+    expect(within(bodies[0] as HTMLElement).getByText("LCI Banco Y")).toBeInTheDocument();
+    expect(within(bodies[1] as HTMLElement).getByText("Tesouro Reserva")).toBeInTheDocument();
+    expect(within(bodies[1] as HTMLElement).getByText("CDB Banco X")).toBeInTheDocument();
   });
 
-  it("avisa que não dá para comparar quando a tabela mistura os dois", async () => {
-    renderCard([
-      fixed({ asset_id: 1, asset_name: "Tesouro Reserva", balance_is_net: false }),
-      fixed({ asset_id: 2, asset_name: "Caixinha", balance_is_net: true }),
-    ]);
+  it("a coluna % do CDI líquido está em destaque, logo depois do ativo (aparece no celular sem rolar)", async () => {
+    renderCard([fixed({ asset_id: 1, asset_name: "Tesouro Reserva" }), exempt({ asset_id: 2 })]);
 
-    await fixedTable();
-    expect(screen.getByText(/mistura saldos brutos e líquidos de IR/)).toBeInTheDocument();
+    const table = await fixedTable();
+    const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(headers).toEqual(["Ativo", "% do CDI líquido", "Período", "Rendimento", "CDI no período", "% do CDI", "Contratado"]);
   });
 
-  it("sem mistura, não avisa", async () => {
-    renderCard([
-      fixed({ asset_id: 1, asset_name: "Tesouro Reserva", balance_is_net: false }),
-      fixed({ asset_id: 2, asset_name: "CDB", balance_is_net: false }),
-    ]);
+  it("isento: selo, 'sem IR' e o % do CDI líquido", async () => {
+    renderCard([fixed({ asset_id: 1, asset_name: "Tesouro Reserva" }), exempt({ asset_id: 2 })]);
 
-    await fixedTable();
-    expect(screen.queryByText(/mistura saldos brutos e líquidos/)).not.toBeInTheDocument();
+    const row = rowOf(await fixedTable(), /LCI Banco Y/);
+    expect(within(row).getByText("Isento de IR")).toBeInTheDocument();
+    expect(within(row).getAllByText("92%")).toHaveLength(2); // sem IR, o % do CDI e o líquido coincidem
+    expect(within(row).getByText("sem IR")).toBeInTheDocument();
   });
 
-  it("um ativo de fora da medição não conta para o aviso de mistura", async () => {
-    renderCard([
-      fixed({ asset_id: 1, asset_name: "Tesouro Reserva", balance_is_net: false }),
-      fixed({ asset_id: 2, asset_name: "Caixinha", balance_is_net: true, pct_of_cdi_bps: null }),
-    ]);
+  it("tributado com saldo bruto: diz a alíquota usada e mostra o CDI líquido do período", async () => {
+    renderCard([fixed({ asset_id: 1, asset_name: "Tesouro Reserva" }), exempt({ asset_id: 2 })]);
+
+    const row = rowOf(await fixedTable(), /Tesouro Reserva/);
+    expect(within(row).getByText("saldo bruto")).toBeInTheDocument();
+    expect(within(row).getByText("118%")).toBeInTheDocument(); // % do CDI como está no saldo
+    expect(within(row).getByText("103%")).toBeInTheDocument(); // % do CDI líquido
+    expect(within(row).getByText("IR de 15%")).toBeInTheDocument();
+    expect(within(row).getByText("CDI líquido +4,42%")).toBeInTheDocument();
+  });
+
+  it("tributado com saldo já líquido: não desconta de novo e diz isso", async () => {
+    renderCard([fixed({ asset_id: 1, asset_name: "Caixinha", balance_is_net: true }), exempt({ asset_id: 2 })]);
+
+    const row = rowOf(await fixedTable(), /Caixinha/);
+    expect(within(row).getByText("saldo líquido de IR")).toBeInTheDocument();
+    expect(within(row).getByText("saldo já líquido")).toBeInTheDocument();
+    expect(within(row).queryByText(/IR de 15%/)).not.toBeInTheDocument();
+  });
+
+  it("com isentos e tributados, a nota manda comparar pela coluna líquida e diz que é simulação", async () => {
+    renderCard([fixed({ asset_id: 1, asset_name: "Tesouro Reserva" }), exempt({ asset_id: 2 })]);
 
     await fixedTable();
-    expect(screen.queryByText(/mistura saldos brutos e líquidos/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Para comparar isentos e tributados, use a coluna % do CDI líquido. É uma simulação com a alíquota escolhida; o app não calcula o IR devido.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/mistura saldos/)).not.toBeInTheDocument();
+  });
+
+  it("saldo bruto e saldo líquido juntos também ganham a nota", async () => {
+    renderCard([fixed({ asset_id: 1, asset_name: "Tesouro Reserva" }), fixed({ asset_id: 2, asset_name: "Caixinha", balance_is_net: true })]);
+    await fixedTable();
+    expect(screen.getByText(/Para comparar isentos e tributados, use a coluna/)).toBeInTheDocument();
+  });
+
+  it("só tributados com o mesmo tipo de saldo: sem grupos, sem nota, com a dica de marcar os isentos", async () => {
+    renderCard([fixed({ asset_id: 1, asset_name: "Tesouro Reserva" }), fixed({ asset_id: 2, asset_name: "CDB" })]);
+
+    const table = await fixedTable();
+    expect(within(table).queryByText("Tributados")).not.toBeInTheDocument();
+    expect(within(table).queryByText("Isentos de IR")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Para comparar isentos e tributados/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Marque os isentos em Carteira → editar ativo/)).toBeInTheDocument();
+  });
+
+  it("só isentos: sem cabeçalho de grupo e sem a dica de marcar", async () => {
+    renderCard([exempt({ asset_id: 1 }), exempt({ asset_id: 2, asset_name: "LCA Banco Z" })]);
+
+    const table = await fixedTable();
+    expect(table.querySelector('th[scope="rowgroup"]')).toBeNull();
+    expect(screen.queryByText(/Marque os isentos/)).not.toBeInTheDocument();
+    expect(within(rowOf(table, /LCA Banco Z/)).getByText("Isento de IR")).toBeInTheDocument();
+  });
+
+  it("um ativo de fora da medição não entra nos grupos nem na nota", async () => {
+    renderCard([
+      fixed({ asset_id: 1, asset_name: "Tesouro Reserva" }),
+      exempt({ asset_id: 2, pct_of_cdi_bps: null, net_pct_of_cdi_bps: null }),
+    ]);
+
+    const table = await fixedTable();
+    expect(within(table).queryByText("LCI Banco Y")).not.toBeInTheDocument();
+    expect(table.querySelector('th[scope="rowgroup"]')).toBeNull();
+    expect(screen.queryByText(/Para comparar isentos e tributados/)).not.toBeInTheDocument();
+    expect(screen.getByText("1 ativo ficou de fora por falta de saldos no período.")).toBeInTheDocument();
+  });
+
+  it("mostra a fonte da tabela regressiva com a data", async () => {
+    renderCard([fixed({ asset_id: 1 })]);
+    await fixedTable();
+    expect(
+      screen.getByText(/Fonte: Tabela regressiva do IR na renda fixa \(Lei 11\.033\/2004\), conferida em 06\/11\/2026\./),
+    ).toBeInTheDocument();
+  });
+
+  it("sem nenhum ativo medido: explica o que falta e não mostra seletor nem tabela", async () => {
+    renderCard([]);
+
+    expect(await screen.findByText("Ainda não há dois saldos de um mesmo ativo de renda fixa para medir o rendimento.")).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: /Rendimento de cada ativo de renda fixa/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Alíquota de IR para comparar")).not.toBeInTheDocument();
+  });
+
+  it("enquanto carrega, mostra o estado de carregamento", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <AssetsVsCdiCard range="all" />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Carregando");
+  });
+
+  it("se a API falha, mostra o erro em vez de uma tabela vazia", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ detail: "Não deu para calcular." }), { status: 500 })),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <AssetsVsCdiCard range="all" />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Não deu para calcular.");
+  });
+});
+
+describe("Renda fixa frente ao CDI: alíquota de IR", () => {
+  const select = () => screen.getByRole("combobox", { name: "Alíquota de IR para comparar" });
+  const rateOf = (fetchMock: ReturnType<typeof renderCard>, call = -1) =>
+    new URL(fetchMock.mock.calls.at(call)![0], "http://app").searchParams.get("ir_rate_bps");
+
+  it("vem em 15% e já pede essa alíquota à API", async () => {
+    const fetchMock = renderCard([fixed({ asset_id: 1 })]);
+    await fixedTable();
+    expect(select()).toHaveValue("1500");
+    expect(rateOf(fetchMock)).toBe("1500");
+  });
+
+  it("trocar a alíquota busca de novo com ela e guarda a escolha no navegador", async () => {
+    const fetchMock = renderCard([fixed({ asset_id: 1 })]);
+    await fixedTable();
+    await userEvent.setup().selectOptions(select(), "2250");
+
+    await waitFor(() => expect(rateOf(fetchMock)).toBe("2250"));
+    expect(localStorage.getItem("il-ir-rate")).toBe("2250");
+  });
+
+  it("lembra a escolha da última vez", async () => {
+    localStorage.setItem("il-ir-rate", "1750");
+    const fetchMock = renderCard([fixed({ asset_id: 1 })]);
+    await fixedTable();
+    expect(select()).toHaveValue("1750");
+    expect(rateOf(fetchMock, 0)).toBe("1750");
   });
 });
 

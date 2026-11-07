@@ -55,7 +55,17 @@ function Summary({ asset }: { asset: Asset }) {
       <Row label="Saldo atual">
         <Money cents={asset.current_cents} />
       </Row>
-      {asset.class_key === "renda_fixa" && <Row label="Tipo de saldo">{asset.balance_is_net ? "Líquido de IR" : "Bruto"}</Row>}
+      {asset.class_key === "renda_fixa" && (
+        <Row label="Imposto de renda">
+          {asset.tax_exempt ? (
+            <Badge tone="good">Isento de IR</Badge>
+          ) : asset.balance_is_net ? (
+            "Tributado, saldo líquido de IR"
+          ) : (
+            "Tributado, saldo bruto"
+          )}
+        </Row>
+      )}
       <Row label="Valor investido (custo)">
         <Money cents={asset.invested_cents} />
       </Row>

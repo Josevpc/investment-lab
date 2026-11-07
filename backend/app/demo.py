@@ -205,6 +205,16 @@ def seed_demo(session: Session, today: dt.date | None = None) -> bool:
             {"indexer": "CDI", "rate_bps": 12_000, "balance_is_net": True},
         ),
         (
+            "LCI Banco Exemplo 90% CDI",
+            "renda_fixa",
+            "Banco Exemplo",
+            1_000_000,
+            "0.90",
+            0,  # sem aporte: não mexe no aporte planejado nem nas somas do mês
+            # Isenta de IR: o saldo já é o que se recebe, e a tela mostra o equivalente bruto.
+            {"indexer": "CDI", "rate_bps": 9_000, "tax_exempt": True},
+        ),
+        (
             "Reserva Exemplo",
             "renda_fixa",
             "Fintech Exemplo",

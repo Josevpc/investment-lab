@@ -28,7 +28,7 @@ def test_demo_seed_builds_a_complete_fictional_portfolio(client):
     assert seed_demo(session, TODAY) is True
 
     assets = client.get(f"{API}/assets").json()
-    assert len(assets) == 9
+    assert len(assets) == 10
     assert {a["institution_name"] for a in assets} == {
         "Banco Exemplo",
         "Corretora Exemplo",
@@ -136,6 +136,22 @@ def test_demo_has_one_fixed_income_asset_with_a_net_balance(client):
     assert net == {"Conta Exemplo 120% do CDI"}
 
 
+def test_demo_has_one_exempt_lci_that_shows_the_gross_equivalent(client):
+    session = session_of(client)
+    seed_demo(session, TODAY)
+    by_name = {a["name"]: a for a in client.get(f"{API}/assets").json()}
+
+    exempt = {name for name, a in by_name.items() if a["tax_exempt"]}
+    assert exempt == {"LCI Banco Exemplo 90% CDI"}
+    lci = by_name["LCI Banco Exemplo 90% CDI"]
+    assert lci["class_key"] == "renda_fixa" and lci["balance_is_net"] is False
+
+    body = client.get(f"{API}/analytics/assets/{lci['id']}/vs-cdi").json()
+    assert abs(body["pct_of_cdi_bps"] - 9_000) <= 30  # o exemplo foi montado a 90% do CDI
+    assert abs(body["net_pct_of_cdi_bps"] - 10_588) <= 40  # equivalente bruto a 15%
+    assert body["ir_rate_bps"] == 1500
+
+
 def test_demo_has_a_fictional_ibovespa_for_the_comparison(client):
     session = session_of(client)
     seed_demo(session, TODAY)
@@ -184,7 +200,7 @@ def test_demo_seed_is_idempotent(client):
     session = session_of(client)
     assert seed_demo(session, TODAY) is True
     assert seed_demo(session, TODAY) is False
-    assert len(client.get(f"{API}/assets").json()) == 9
+    assert len(client.get(f"{API}/assets").json()) == 10
 
 
 def test_system_status_reports_demo_mode_off_by_default(client):

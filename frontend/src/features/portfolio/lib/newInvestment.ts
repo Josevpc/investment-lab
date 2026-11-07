@@ -93,6 +93,7 @@ export function updateInputFrom(asset: Asset, patch: Partial<AssetUpdateInput> =
     fii_segment: asset.fii_segment,
     hold_only: asset.hold_only,
     balance_is_net: asset.balance_is_net,
+    tax_exempt: asset.tax_exempt,
     archived: asset.archived,
     is_new_investment: null,
     ...patch,

@@ -72,6 +72,11 @@ class Asset(Base):
     # de bruto (ex.: Tesouro Reserva). Só rotula o desempenho: o app não calcula imposto.
     balance_is_net: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
 
+    # Renda fixa isenta de IR (LCI, LCA...): o saldo já é o que a pessoa recebe. Só serve para
+    # comparar o desempenho com o CDI (equivalente bruto); o app não calcula imposto. Nunca junto
+    # com `balance_is_net`, e só na renda fixa (regra no service).
+    tax_exempt: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+
     asset_class: Mapped[AssetClass] = relationship(lazy="joined")
     institution: Mapped[Institution] = relationship(lazy="joined")
 

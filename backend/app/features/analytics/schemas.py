@@ -133,6 +133,8 @@ class AssetPerformanceOut(BaseModel):
     contracted_pct_bps: int | None  # só para ativos "CDI": a taxa contratada, em % do CDI
     # Os saldos digitados já vêm sem o IR: o % do CDI não é comparável ao de um ativo bruto.
     balance_is_net: bool
+    # Renda fixa isenta de IR (LCI, LCA...): o saldo já é o que a pessoa recebe.
+    tax_exempt: bool
     dates: list[dt.date]  # datas com saldo observado (as opções de início e fim do período)
     start_date: dt.date | None
     end_date: dt.date | None
@@ -146,6 +148,14 @@ class AssetPerformanceOut(BaseModel):
     return_bps: int | None  # quanto R$ 1 aplicado no início rendeu no período
     cdi_bps: int | None  # CDI acumulado no mesmo período
     pct_of_cdi_bps: int | None  # 12000 = 120% do CDI
+    # Alíquota de IR usada nos dois campos abaixo (a escolhida na tela); None fora da renda fixa.
+    ir_rate_bps: int | None
+    # CDI do período depois do IR com a alíquota acima; None sem CDI ou fora da renda fixa.
+    net_cdi_bps: int | None
+    # Equivalente bruto do % do CDI: de um isento ou de um saldo líquido, quanto um ativo bruto
+    # teria de render para dar o mesmo; igual a `pct_of_cdi_bps` para saldo bruto tributado.
+    net_pct_of_cdi_bps: int | None
+    ir_rates_source: str  # de onde vêm as alíquotas
     vs_contracted_bps: int | None  # realizado menos contratado, em pontos-base de % do CDI
     steps: list[AssetStepOut]
     warnings: list[str]
