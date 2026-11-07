@@ -6,7 +6,7 @@ export function useBenchmarkStatus() {
   return useQuery({ queryKey: ["benchmarks", "status"], queryFn: () => api.get<BenchmarkStatus>("/benchmarks/status") });
 }
 
-/** Busca CDI, Selic e Ibovespa de novo (precisa de internet). */
+/** Busca CDI, Selic, IPCA, Ibovespa e dólar de novo (precisa de internet). */
 export function useRefreshBenchmarks() {
   const client = useQueryClient();
   return useMutation({

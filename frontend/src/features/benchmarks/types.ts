@@ -17,12 +17,15 @@ export interface BenchmarkStatus {
   /** Ibovespa (fechamentos diários, referência da renda variável): dias guardados (0 = nunca baixado) e último dia. */
   index_days: number;
   index_through: string | null;
+  /** Dólar (PTAX de venda, referência da cripto): dias guardados (0 = nunca baixado) e último dia. */
+  usd_days: number;
+  usd_through: string | null;
 }
 
 export interface RefreshResult {
   ok: boolean;
   rows_saved: number;
-  /** Pode trazer "Ibovespa: <motivo>" mesmo com ok=true (o CDI foi salvo e só o Ibovespa falhou). */
+  /** Pode trazer "Ibovespa: <motivo>", "Dólar: <motivo>" ou "IPCA: <motivo>" mesmo com ok=true (o CDI foi salvo e só uma delas falhou). */
   errors: string[];
   status: BenchmarkStatus;
 }

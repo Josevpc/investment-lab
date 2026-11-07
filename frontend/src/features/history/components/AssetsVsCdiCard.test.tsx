@@ -39,6 +39,9 @@ function asset(overrides: Partial<AssetVsCdiResult>): AssetVsCdiResult {
     ibovespa_bps: 600,
     vs_ibovespa_bps: 200,
     ibovespa_covered_through: "2026-10-16",
+    usd_bps: null,
+    vs_usd_bps: null,
+    usd_covered_through: null,
     ...overrides,
   };
 }
@@ -61,8 +64,24 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const variableTable = async () =>
-  screen.findByRole("table", { name: /renda variável e cripto contra o CDI e contra o Ibovespa/ });
+const variableTable = async () => screen.findByRole("table", { name: /renda variável contra o CDI e contra o Ibovespa/ });
+const cryptoTable = async () => screen.findByRole("table", { name: /cripto contra o CDI e contra o dólar/ });
+
+const bitcoin = (overrides: Partial<AssetVsCdiResult> = {}) =>
+  asset({
+    asset_id: 2,
+    asset_name: "Bitcoin",
+    class_key: "cripto",
+    return_bps: 1500,
+    cdi_bps: 520,
+    ibovespa_bps: null,
+    vs_ibovespa_bps: null,
+    ibovespa_covered_through: "2026-10-16",
+    usd_bps: 400,
+    vs_usd_bps: 1100,
+    usd_covered_through: "2026-10-15",
+    ...overrides,
+  });
 
 const SOURCE = "Tabela regressiva do IR na renda fixa (Lei 11.033/2004), conferida em 06/11/2026.";
 
@@ -265,7 +284,7 @@ describe("Renda fixa frente ao CDI: alíquota de IR", () => {
   });
 });
 
-describe("Renda variável e cripto frente ao CDI e ao Ibovespa", () => {
+describe("Renda variável frente ao CDI e ao Ibovespa", () => {
   it("com Ibovespa completo: mostra o índice e a diferença com sinal e p.p., sem aviso", async () => {
     renderCard([asset({})]);
 
@@ -279,17 +298,17 @@ describe("Renda variável e cripto frente ao CDI e ao Ibovespa", () => {
     expect(within(row).getByText("+2 p.p.")).toBeInTheDocument();
     expect(within(row).getByText("+2,8 p.p.")).toBeInTheDocument(); // 8% − 5,2% do CDI
     expect(screen.queryByText(/Ibovespa só vai até|Ainda não há dados do Ibovespa/)).not.toBeInTheDocument();
-    expect(screen.getByText(/referência da bolsa brasileira; para cripto e ativos no exterior/)).toBeInTheDocument();
+    expect(screen.getByText(/referência da bolsa brasileira; para ativos no exterior/)).toBeInTheDocument();
   });
 
   it("sem Ibovespa baixado: traço nas colunas e um aviso só, que diz onde atualizar", async () => {
     renderCard([
       asset({ ibovespa_bps: null, vs_ibovespa_bps: null, ibovespa_covered_through: null }),
-      asset({ asset_id: 2, asset_name: "Bitcoin", class_key: "cripto", ibovespa_bps: null, vs_ibovespa_bps: null, ibovespa_covered_through: null }),
+      asset({ asset_id: 3, asset_name: "IVVB11", ibovespa_bps: null, vs_ibovespa_bps: null, ibovespa_covered_through: null }),
     ]);
 
     const table = await variableTable();
-    const row = within(table).getByRole("row", { name: /Bitcoin/ });
+    const row = within(table).getByRole("row", { name: /IVVB11/ });
     expect(within(row).getAllByText("—").length).toBeGreaterThanOrEqual(2);
     expect(
       screen.getAllByText("Ainda não há dados do Ibovespa. Atualize os índices em Configurações → Dados e proteção."),
@@ -299,13 +318,81 @@ describe("Renda variável e cripto frente ao CDI e ao Ibovespa", () => {
   it("com Ibovespa desatualizado: traço só onde falta e aviso com a última data", async () => {
     renderCard([
       asset({ end_date: "2026-08-28", ibovespa_covered_through: "2026-08-29" }),
-      asset({ asset_id: 2, asset_name: "Bitcoin", class_key: "cripto", ibovespa_bps: null, vs_ibovespa_bps: null, ibovespa_covered_through: "2026-08-29" }),
+      asset({ asset_id: 3, asset_name: "IVVB11", ibovespa_bps: null, vs_ibovespa_bps: null, ibovespa_covered_through: "2026-08-29" }),
     ]);
 
     const table = await variableTable();
     expect(within(within(table).getByRole("row", { name: /BOVA11/ })).getByText("+2 p.p.")).toBeInTheDocument();
-    expect(within(table).getByRole("row", { name: /Bitcoin/ })).toHaveTextContent("—");
+    expect(within(table).getByRole("row", { name: /IVVB11/ })).toHaveTextContent("—");
     expect(screen.getByText("O Ibovespa só vai até 29/08/2026; atualize os índices.")).toBeInTheDocument();
     expect(screen.queryByText(/Ainda não há dados do Ibovespa/)).not.toBeInTheDocument();
+  });
+
+  it("a cripto não entra na tabela do Ibovespa", async () => {
+    renderCard([asset({}), bitcoin()]);
+
+    const table = await variableTable();
+    expect(within(table).getByRole("row", { name: /BOVA11/ })).toBeInTheDocument();
+    expect(within(table).queryByRole("row", { name: /Bitcoin/ })).not.toBeInTheDocument();
+  });
+
+  it("sem renda variável, o cartão do Ibovespa nem aparece", async () => {
+    renderCard([bitcoin()]);
+    await cryptoTable();
+    expect(screen.queryByRole("table", { name: /renda variável contra o CDI/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Renda variável frente ao CDI e ao Ibovespa")).not.toBeInTheDocument();
+  });
+});
+
+describe("Cripto frente ao CDI e ao dólar", () => {
+  it("completo: o dólar no lugar do Ibovespa, com a diferença em p.p. e sem aviso", async () => {
+    renderCard([bitcoin()]);
+
+    const table = await cryptoTable();
+    expect(within(table).getByRole("columnheader", { name: "Dólar no período" })).toBeInTheDocument();
+    expect(within(table).getByRole("columnheader", { name: "Diferença vs. dólar" })).toBeInTheDocument();
+    expect(within(table).queryByRole("columnheader", { name: /Ibovespa/ })).not.toBeInTheDocument();
+
+    const row = within(table).getByRole("row", { name: /Bitcoin/ });
+    expect(within(row).getByText("+4%")).toBeInTheDocument();
+    expect(within(row).getByText("+11 p.p.")).toBeInTheDocument();
+    expect(screen.queryByText(/dólar só vai até|Ainda não há dados do dólar/)).not.toBeInTheDocument();
+  });
+
+  it("diz o limite: sem a cotação de cada moeda não separa cripto de câmbio", async () => {
+    renderCard([bitcoin()]);
+    await cryptoTable();
+    expect(
+      screen.getByText("Sem a cotação em dólar de cada moeda, não dá para separar o que veio da cripto do que veio do câmbio."),
+    ).toBeInTheDocument();
+  });
+
+  it("sem dólar baixado: traço e um aviso só, que diz onde atualizar", async () => {
+    renderCard([
+      bitcoin({ usd_bps: null, vs_usd_bps: null, usd_covered_through: null }),
+      bitcoin({ asset_id: 4, asset_name: "Ether", usd_bps: null, vs_usd_bps: null, usd_covered_through: null }),
+    ]);
+
+    const table = await cryptoTable();
+    expect(within(within(table).getByRole("row", { name: /Ether/ })).getAllByText("—").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("Ainda não há dados do dólar. Atualize os índices em Configurações → Dados e proteção.")).toHaveLength(1);
+  });
+
+  it("com dólar desatualizado: traço só onde falta e aviso com a última data", async () => {
+    renderCard([bitcoin(), bitcoin({ asset_id: 4, asset_name: "Ether", usd_bps: null, vs_usd_bps: null, usd_covered_through: "2026-08-29" })]);
+
+    const table = await cryptoTable();
+    expect(within(within(table).getByRole("row", { name: /Bitcoin/ })).getByText("+11 p.p.")).toBeInTheDocument();
+    expect(within(table).getByRole("row", { name: /Ether/ })).toHaveTextContent("—");
+    expect(screen.getByText("O dólar só vai até 15/10/2026; atualize os índices.")).toBeInTheDocument();
+  });
+
+  it("renda fixa não aparece em nenhuma das tabelas de mercado", async () => {
+    renderCard([fixed({ asset_id: 1, asset_name: "Tesouro Reserva" }), bitcoin()]);
+
+    const table = await cryptoTable();
+    expect(within(table).queryByText("Tesouro Reserva")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: /renda variável contra o CDI/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Ibovespa/)).not.toBeInTheDocument();
   });
 });

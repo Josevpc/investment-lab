@@ -5,6 +5,21 @@ export const GOLD = "var(--chart-gold)";
 export const MUTED = "var(--chart-muted)";
 /** Índice de bolsa (Ibovespa): matiz frio, longe do dourado da carteira e do verde do CDI. */
 export const INDEX = "var(--chart-index)";
+/** Inflação (IPCA): ameixa. */
+export const IPCA = "var(--chart-ipca)";
+/** Câmbio (dólar PTAX, referência da cripto): argila. */
+export const USD = "var(--chart-usd)";
+
+/**
+ * Traço de cada linha de comparação: a carteira é contínua e cada referência tem o seu padrão, para que as linhas
+ * se distingam sem depender da cor (daltonismo, impressão em preto e branco).
+ */
+export const DASH = {
+  cdi: "6 4", // tracejado
+  ibovespa: "12 4 2 4", // traço-ponto
+  ipca: "2 4", // pontilhado
+  usd: "10 3 2 3 2 3", // traço-ponto-ponto
+} as const;
 
 /**
  * Categóricas na ordem fixa: seis tons de terra (musgo, argila, ocre, pedra azul, ameixa, areia), iguais nos dois temas.

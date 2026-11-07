@@ -60,6 +60,9 @@ export interface PerformancePoint {
   portfolio_bps: number | null;
   cdi_bps: number | null;
   ibovespa_bps: number | null;
+  ipca_bps: number | null;
+  /** Só no escopo Cripto: variação do dólar (PTAX) até a data. */
+  usd_bps: number | null;
 }
 
 export interface PerformanceSummary {
@@ -72,6 +75,14 @@ export interface PerformanceSummary {
   ibovespa_bps: number | null;
   /** Carteira − Ibovespa, em pontos-base de ponto percentual. */
   vs_ibovespa_bps: number | null;
+  ipca_bps: number | null;
+  /** Carteira − IPCA, em pontos-base de ponto percentual. */
+  vs_ipca_bps: number | null;
+  /** Até que mês (AAAA-MM) ou dia o IPCA entrou na conta: o IPCA sai com atraso e pode parar antes do fim do período. */
+  ipca_date: string | null;
+  /** Só no escopo Cripto. */
+  usd_bps: number | null;
+  vs_usd_bps: number | null;
   /** Fluxo externo líquido do período todo (positivo entrou, negativo saiu). */
   flows_cents: number;
 }
@@ -103,6 +114,12 @@ export interface Performance {
   ibovespa_covered_through: string | null;
   /** Fonte do Ibovespa (cita a B3); null enquanto não há dado. */
   ibovespa_source: string | null;
+  /** Último mês (AAAA-MM) com IPCA guardado. */
+  ipca_covered_through: string | null;
+  ipca_source: string | null;
+  /** Último dia (AAAA-MM-DD) com a cotação do dólar guardada. */
+  usd_covered_through: string | null;
+  usd_source: string | null;
 }
 
 export interface PerformanceInput {
@@ -175,4 +192,9 @@ export interface AssetVsCdi {
   /** Variação do ativo − Ibovespa, em pontos-base de ponto percentual. */
   vs_ibovespa_bps: number | null;
   ibovespa_covered_through: string | null;
+  /** Variação do dólar (PTAX) no mesmo período; só para cripto (null nas outras categorias ou sem dados). */
+  usd_bps: number | null;
+  /** Variação do ativo − dólar, em pontos-base de ponto percentual. */
+  vs_usd_bps: number | null;
+  usd_covered_through: string | null;
 }

@@ -39,6 +39,9 @@ function data(overrides: Partial<AssetVsCdiData>): AssetVsCdiData {
     ibovespa_bps: 600,
     vs_ibovespa_bps: 200,
     ibovespa_covered_through: "2026-10-16",
+    usd_bps: null,
+    vs_usd_bps: null,
+    usd_covered_through: null,
     ...overrides,
   };
 }
@@ -217,10 +220,73 @@ describe("Variação contra o Ibovespa (detalhe do ativo)", () => {
     expect(card).toHaveTextContent("O Ibovespa só vai até 29/08/2026; atualize os índices.");
   });
 
-  it("renda fixa não mostra o Ibovespa", async () => {
+  it("renda fixa não mostra o Ibovespa nem o dólar", async () => {
     renderMetric(data({ class_key: "renda_fixa", pct_of_cdi_bps: 11_000, ibovespa_bps: null, vs_ibovespa_bps: null }));
     await screen.findByText("% do CDI realizado");
     expect(screen.queryByText("Variação contra o Ibovespa")).not.toBeInTheDocument();
+    expect(screen.queryByText("Variação contra o dólar")).not.toBeInTheDocument();
+  });
+
+  it("renda variável não mostra o dólar", async () => {
+    renderMetric(data({}));
+    await ibovespaCard();
+    expect(screen.queryByText("Variação contra o dólar")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Sem a cotação em dólar de cada moeda/)).not.toBeInTheDocument();
+  });
+});
+
+const usdCard = async () => (await screen.findByText("Variação contra o dólar")).parentElement!;
+
+describe("Variação contra o dólar (detalhe de um ativo de cripto)", () => {
+  const crypto = (overrides: Partial<AssetVsCdiData> = {}) =>
+    data({
+      class_key: "cripto",
+      asset_name: "Bitcoin",
+      ibovespa_bps: null,
+      vs_ibovespa_bps: null,
+      ibovespa_covered_through: "2026-10-16",
+      usd_bps: 300,
+      vs_usd_bps: 500,
+      usd_covered_through: "2026-10-15",
+      ...overrides,
+    });
+
+  it("completo: o dólar toma o lugar do Ibovespa, com a diferença em p.p. e a conta explicada", async () => {
+    renderMetric(crypto());
+    const card = await usdCard();
+    expect(card).toHaveTextContent("+5 p.p.");
+    expect(card).toHaveTextContent("variação +8% contra dólar +3%");
+    expect(screen.queryByText("Variação contra o Ibovespa")).not.toBeInTheDocument();
+    expect(screen.getByText(/Dólar até 15\/10\/2026\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Ibovespa até/)).not.toBeInTheDocument();
+  });
+
+  it("diz o limite da comparação: sem a cotação de cada moeda não separa cripto de câmbio", async () => {
+    renderMetric(crypto());
+    expect(
+      await screen.findByText(/Sem a cotação em dólar de cada moeda, não dá para separar o que veio da cripto do que veio do câmbio\./),
+    ).toBeInTheDocument();
+  });
+
+  it("sem dados: traço e onde atualizar", async () => {
+    renderMetric(crypto({ usd_bps: null, vs_usd_bps: null, usd_covered_through: null }));
+    const card = await usdCard();
+    expect(card).toHaveTextContent("—");
+    expect(card).toHaveTextContent("Ainda não há dados do dólar. Atualize os índices em Configurações → Dados e proteção.");
+  });
+
+  it("parcial: traço e até que dia o dólar vai", async () => {
+    renderMetric(crypto({ usd_bps: null, vs_usd_bps: null, usd_covered_through: "2026-08-29" }));
+    expect(await usdCard()).toHaveTextContent("O dólar só vai até 29/08/2026; atualize os índices.");
+  });
+
+  it("com aviso do back-end sobre o dólar, não repete a mensagem na métrica", async () => {
+    renderMetric(
+      crypto({ usd_bps: null, vs_usd_bps: null, usd_covered_through: "2026-08-29", warnings: ["Sem cotação do dólar para o fim do período."] }),
+    );
+    const card = await usdCard();
+    expect(card).toHaveTextContent("sem dólar no período: veja o aviso abaixo");
+    expect(screen.getByText("Sem cotação do dólar para o fim do período.")).toBeInTheDocument();
   });
 });
 

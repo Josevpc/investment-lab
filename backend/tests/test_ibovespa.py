@@ -156,7 +156,7 @@ def test_refresh_saves_ibovespa_and_is_idempotent(client):
     session = session_of(client)
     rows = [(D(2026, 10, 1), 12_959_329), (D(2026, 10, 2), 13_000_000)]
     first = refresh(session, fetcher=cdi_fetcher, index_fetcher=lambda s, e: rows, today=TODAY)
-    assert first.rows_saved == 2 + 2  # CDI e Selic mensais + dois fechamentos
+    assert first.rows_saved == 3 + 2  # CDI, Selic e IPCA mensais + dois fechamentos
     refresh(session, fetcher=cdi_fetcher, index_fetcher=lambda s, e: rows, today=TODAY)
 
     assert session.scalar(select(func.count()).select_from(BenchmarkIndexLevel)) == 2
@@ -231,9 +231,9 @@ def test_ibovespa_failure_does_not_lose_cdi_or_selic(client):
     result = refresh(session, fetcher=cdi_fetcher, index_fetcher=offline)
 
     assert result.ok is True
-    assert result.rows_saved == 2  # CDI e Selic mensais
+    assert result.rows_saved == 3  # CDI, Selic e IPCA mensais
     assert result.errors == ["Ibovespa: sem rede"]
-    assert {s.series: s.months for s in result.status.series} == {"cdi": 1, "selic": 1}
+    assert {s.series: s.months for s in result.status.series} == {"cdi": 1, "selic": 1, "ipca": 1}
     assert result.status.index_days == 0
 
 
@@ -252,9 +252,9 @@ def test_a_failing_year_keeps_the_earlier_years_and_the_next_refresh_resumes(cli
 
     assert first.ok is True
     assert first.errors == ["Ibovespa: B3 caiu"]
-    assert first.rows_saved == 2 + 2  # CDI e Selic + os dois fechamentos de 2025
+    assert first.rows_saved == 3 + 2  # CDI, Selic e IPCA + os dois fechamentos de 2025
     assert (first.status.index_days, first.status.index_through) == (2, "2025-12-31")
-    assert {s.series: s.months for s in first.status.series} == {"cdi": 1, "selic": 1}
+    assert {s.series: s.months for s in first.status.series} == {"cdi": 1, "selic": 1, "ipca": 1}
 
     calls = []
 
@@ -301,6 +301,7 @@ def test_refresh_endpoint_succeeds_when_only_ibovespa_fails(client, monkeypatch)
     monkeypatch.setattr(bcb, "fetch_series", cdi_fetcher)
     monkeypatch.setattr(bcb, "fetch_daily_cdi", lambda s, e: [(D(2026, 10, 1), 437_390)])
     monkeypatch.setattr(bcb, "fetch_ibovespa", offline)
+    monkeypatch.setattr(bcb, "fetch_daily_usd", lambda s, e: [])
 
     response = client.post(f"{API}/benchmarks/refresh")
 
@@ -316,6 +317,7 @@ def test_refresh_endpoint_is_502_only_when_nothing_was_saved(client, monkeypatch
     monkeypatch.setattr(bcb, "fetch_series", offline)
     monkeypatch.setattr(bcb, "fetch_daily_cdi", offline)
     monkeypatch.setattr(bcb, "fetch_ibovespa", offline)
+    monkeypatch.setattr(bcb, "fetch_daily_usd", offline)
     assert client.post(f"{API}/benchmarks/refresh").status_code == 502
 
     # Só o Ibovespa chegou: algo foi salvo, então não é erro.
@@ -331,6 +333,7 @@ def test_refresh_if_stale_also_fetches_when_there_is_no_ibovespa(client, monkeyp
     monkeypatch.setattr(
         bcb, "fetch_ibovespa", lambda s, e: index_calls.append(s) or [(D(2026, 10, 1), 100)]
     )
+    monkeypatch.setattr(bcb, "fetch_daily_usd", lambda s, e: [(D(2026, 10, 1), 54_321)])
 
     assert refresh_if_stale(session) is not None  # banco vazio
     assert refresh_if_stale(session) is None  # recém-atualizado, com CDI diário e Ibovespa

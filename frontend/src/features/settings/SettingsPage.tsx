@@ -80,7 +80,7 @@ function StorageCard() {
     <Card title="Onde ficam os dados">
       <p className="text-sm text-slate-600 dark:text-slate-400">
         Tudo fica neste computador, em um arquivo local. Nada é enviado para a nuvem; a única consulta externa é a dos índices de
-        referência (CDI, Selic e Ibovespa). Antes de atualizar o app ou restaurar um backup, uma cópia do arquivo é guardada automaticamente.
+        referência (CDI, Selic, IPCA, Ibovespa e dólar). Antes de atualizar o app ou restaurar um backup, uma cópia do arquivo é guardada automaticamente.
       </p>
       {status.isLoading && <Loading />}
       {s && (

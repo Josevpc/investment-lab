@@ -15,6 +15,7 @@ vi.mock("recharts", async () => {
 const classes = [
   { id: 1, key: "renda_fixa", name: "Renda fixa", color: "#000", archived: false },
   { id: 2, key: "renda_variavel", name: "Renda variável", color: "#000", archived: false },
+  { id: 3, key: "cripto", name: "Cripto", color: "#000", archived: false },
 ];
 
 function performance(overrides: Partial<Performance> = {}): Performance {
@@ -24,8 +25,8 @@ function performance(overrides: Partial<Performance> = {}): Performance {
     include_reserve: false,
     observations_count: 2,
     points: [
-      { date: "2026-08-31", value_cents: 1_000_000, flows_cents: 0, portfolio_bps: 0, cdi_bps: 0, ibovespa_bps: 0 },
-      { date: "2026-09-30", value_cents: 1_165_000, flows_cents: 150_000, portfolio_bps: 150, cdi_bps: 90, ibovespa_bps: 320 },
+      { date: "2026-08-31", value_cents: 1_000_000, flows_cents: 0, portfolio_bps: 0, cdi_bps: 0, ibovespa_bps: 0, ipca_bps: 0, usd_bps: null },
+      { date: "2026-09-30", value_cents: 1_165_000, flows_cents: 150_000, portfolio_bps: 150, cdi_bps: 90, ibovespa_bps: 320, ipca_bps: 40, usd_bps: null },
     ],
     summary: {
       start_date: "2026-08-31",
@@ -35,6 +36,11 @@ function performance(overrides: Partial<Performance> = {}): Performance {
       vs_cdi_bps: 60,
       ibovespa_bps: 320,
       vs_ibovespa_bps: -170,
+      ipca_bps: 40,
+      vs_ipca_bps: 110,
+      ipca_date: "2026-09",
+      usd_bps: null,
+      vs_usd_bps: null,
       flows_cents: 150_000,
     },
     method: "Retorno ponderado pelo tempo, pelas datas dos saldos.",
@@ -45,6 +51,10 @@ function performance(overrides: Partial<Performance> = {}): Performance {
     cdi_covered_through: "2026-09-30",
     ibovespa_covered_through: "2026-10-16",
     ibovespa_source: "B3 (Ibovespa)",
+    ipca_covered_through: "2026-09",
+    ipca_source: "IBGE (IPCA)",
+    usd_covered_through: null,
+    usd_source: null,
     ...overrides,
   };
 }
@@ -97,6 +107,10 @@ describe("Sua carteira vs. mercado com o Ibovespa", () => {
     expect(screen.getByRole("checkbox", { name: "Ibovespa" })).toBeChecked();
 
     await user.selectOptions(scope, "renda_fixa");
+    expect(screen.getByRole("checkbox", { name: "Ibovespa" })).not.toBeChecked();
+
+    // Cripto compara com o dólar: o Ibovespa fica desligado, mas à escolha.
+    await user.selectOptions(scope, "cripto");
     expect(screen.getByRole("checkbox", { name: "Ibovespa" })).not.toBeChecked();
   });
 
@@ -155,6 +169,205 @@ describe("Sua carteira vs. mercado com o Ibovespa", () => {
     expect(screen.getByText(warning)).toBeInTheDocument();
     expect(screen.queryByText(/atualize os índices\.$/)).not.toBeInTheDocument();
     expect(screen.getByText("Ibovespa: B3 (Ibovespa), dados até 29/08/2026.")).toBeInTheDocument();
+  });
+});
+
+describe("Sua carteira vs. mercado com o IPCA", () => {
+  const ipcaCheckbox = () => screen.getByRole("checkbox", { name: "IPCA" });
+
+  it("começa desligado, em qualquer escopo, e não some ao trocar de categoria", async () => {
+    const user = userEvent.setup();
+    renderTab(performance());
+
+    await screen.findByText("Diferença vs. CDI");
+    expect(ipcaCheckbox()).not.toBeChecked();
+    expect(screen.queryByText("Diferença vs. IPCA")).not.toBeInTheDocument();
+
+    await user.click(ipcaCheckbox());
+    await screen.findByRole("option", { name: "Renda variável" });
+    await user.selectOptions(screen.getByRole("combobox", { name: /Escopo/ }), "renda_variavel");
+    expect(ipcaCheckbox()).toBeChecked();
+  });
+
+  it("ligado: métricas com a diferença em p.p., coluna na tabela, fonte com o mês e o traço de cada série na ordem da legenda", async () => {
+    const user = userEvent.setup();
+    renderTab(performance());
+
+    await screen.findByText("Diferença vs. CDI");
+    await user.click(screen.getByRole("checkbox", { name: "Ibovespa" }));
+    await user.click(ipcaCheckbox());
+
+    expect(screen.getByText("IPCA", { selector: "p" }).parentElement).toHaveTextContent("+0,4%");
+    expect(screen.getByText("Diferença vs. IPCA").parentElement).toHaveTextContent("+1,1 p.p.");
+
+    const table = screen.getByRole("table", { name: /CDI, Ibovespa e IPCA/ });
+    const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(headers.slice(3)).toEqual(["Retorno: Carteira", "Retorno: CDI", "Retorno: Ibovespa", "Retorno: IPCA"]);
+    expect(within(within(table).getByRole("row", { name: /30\/09\/2026/ })).getByText("+0,4%")).toBeInTheDocument();
+    expect(screen.getByText("IPCA: IBGE (IPCA), dados até set/2026.")).toBeInTheDocument();
+    expect(screen.queryByText(/O IPCA só vai até/)).not.toBeInTheDocument();
+  });
+
+  it("IPCA que para antes do fim do período: a métrica diz até que mês vai", async () => {
+    const user = userEvent.setup();
+    renderTab(performance({ summary: { ...performance().summary, ipca_date: "2026-08" }, ipca_covered_through: "2026-08" }));
+
+    await screen.findByText("Diferença vs. CDI");
+    expect(screen.queryByText("até ago/2026")).not.toBeInTheDocument();
+    await user.click(ipcaCheckbox());
+    expect(screen.getByText("IPCA", { selector: "p" }).parentElement).toHaveTextContent("até ago/2026");
+  });
+
+  it("sem IPCA baixado: traço, aviso e um link para atualizar os índices, só com a série ligada", async () => {
+    const user = userEvent.setup();
+    renderTab(
+      performance({
+        points: performance().points.map((point) => ({ ...point, ipca_bps: null })),
+        summary: { ...performance().summary, ipca_bps: null, vs_ipca_bps: null, ipca_date: null },
+        ipca_covered_through: null,
+        ipca_source: null,
+      }),
+    );
+
+    await screen.findByText("Diferença vs. CDI");
+    const message = "Ainda não há dados do IPCA. Atualize os índices em Configurações → Dados e proteção.";
+    expect(screen.queryByText(message)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Atualizar índices" })).not.toBeInTheDocument();
+
+    await user.click(ipcaCheckbox());
+    expect(screen.getByText(message)).toBeInTheDocument();
+    expect(screen.getByText("Diferença vs. IPCA").parentElement).toHaveTextContent("—");
+    expect(screen.getByText(/IPCA: ainda não baixado/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Atualizar índices" })).toHaveAttribute("href", "/configuracoes#dados");
+  });
+
+  it("IPCA parcial sem número no resumo: avisa até que mês ele vai", async () => {
+    const user = userEvent.setup();
+    renderTab(
+      performance({
+        points: [performance().points[0], { ...performance().points[1], ipca_bps: null }],
+        summary: { ...performance().summary, ipca_bps: null, vs_ipca_bps: null, ipca_date: null },
+        ipca_covered_through: "2026-07",
+      }),
+    );
+
+    await screen.findByText("Diferença vs. CDI");
+    await user.click(ipcaCheckbox());
+    expect(screen.getByText("O IPCA só vai até jul/2026 (ele é divulgado com atraso); atualize os índices.")).toBeInTheDocument();
+  });
+
+  it("aviso do back-end sobre o IPCA só aparece com a série ligada e não é repetido", async () => {
+    const user = userEvent.setup();
+    const warning = "O IPCA de setembro ainda não foi divulgado; a comparação vai até agosto.";
+    renderTab(
+      performance({
+        points: [performance().points[0], { ...performance().points[1], ipca_bps: null }],
+        summary: { ...performance().summary, ipca_bps: null, vs_ipca_bps: null },
+        ipca_covered_through: "2026-08",
+        warnings: [warning],
+      }),
+    );
+
+    await screen.findByText("Diferença vs. CDI");
+    expect(screen.queryByText(warning)).not.toBeInTheDocument();
+    await user.click(ipcaCheckbox());
+    expect(screen.getByText(warning)).toBeInTheDocument();
+    expect(screen.queryByText(/ele é divulgado com atraso/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Sua carteira vs. mercado com o dólar (categoria Cripto)", () => {
+  const cripto = (overrides: Partial<Performance> = {}) =>
+    performance({
+      points: [
+        { ...performance().points[0], usd_bps: 0 },
+        { ...performance().points[1], portfolio_bps: 900, usd_bps: 250 },
+      ],
+      summary: { ...performance().summary, portfolio_bps: 900, vs_cdi_bps: 810, usd_bps: 250, vs_usd_bps: 650 },
+      usd_covered_through: "2026-09-30",
+      usd_source: "Banco Central (PTAX)",
+      ...overrides,
+    });
+
+  const chooseCripto = async (user: ReturnType<typeof userEvent.setup>) => {
+    await screen.findByText("Diferença vs. CDI");
+    await screen.findByRole("option", { name: "Cripto" });
+    await user.selectOptions(screen.getByRole("combobox", { name: /Escopo/ }), "cripto");
+  };
+
+  it("o seletor Dólar só existe na categoria Cripto, onde já vem ligado, e o Ibovespa fica desligado", async () => {
+    const user = userEvent.setup();
+    renderTab(cripto());
+
+    await screen.findByText("Diferença vs. CDI");
+    expect(screen.queryByRole("checkbox", { name: "Dólar" })).not.toBeInTheDocument();
+
+    await chooseCripto(user);
+    expect(screen.getByRole("checkbox", { name: "Dólar" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Ibovespa" })).not.toBeChecked();
+
+    await user.selectOptions(screen.getByRole("combobox", { name: /Escopo/ }), "renda_variavel");
+    expect(screen.queryByRole("checkbox", { name: "Dólar" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Diferença vs. dólar")).not.toBeInTheDocument();
+  });
+
+  it("métricas, coluna na tabela e fonte do dólar, com o Ibovespa ainda à escolha", async () => {
+    const user = userEvent.setup();
+    renderTab(cripto());
+    await chooseCripto(user);
+
+    expect(screen.getByText("Dólar", { selector: "p" }).parentElement).toHaveTextContent("+2,5%");
+    expect(screen.getByText("Diferença vs. dólar").parentElement).toHaveTextContent("+6,5 p.p.");
+
+    await user.click(screen.getByRole("checkbox", { name: "Ibovespa" }));
+    await user.click(screen.getByRole("checkbox", { name: "IPCA" }));
+    const table = screen.getByRole("table", { name: /CDI, Ibovespa, IPCA e Dólar/ });
+    const headers = within(table).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(headers.slice(3)).toEqual(["Retorno: Cripto", "Retorno: CDI", "Retorno: Ibovespa", "Retorno: IPCA", "Retorno: Dólar"]);
+    expect(within(within(table).getByRole("row", { name: /30\/09\/2026/ })).getByText("+2,5%")).toBeInTheDocument();
+    expect(screen.getByText("Dólar: Banco Central (PTAX), dados até 30/09/2026.")).toBeInTheDocument();
+  });
+
+  it("desligar o dólar tira métricas, coluna e fonte", async () => {
+    const user = userEvent.setup();
+    renderTab(cripto());
+    await chooseCripto(user);
+
+    await user.click(screen.getByRole("checkbox", { name: "Dólar" }));
+    expect(screen.queryByText("Diferença vs. dólar")).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Retorno: Dólar" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Dólar:/)).not.toBeInTheDocument();
+  });
+
+  it("sem cotação do dólar baixada: traço, aviso e link para atualizar os índices", async () => {
+    const user = userEvent.setup();
+    renderTab(
+      cripto({
+        points: performance().points,
+        summary: { ...performance().summary, usd_bps: null, vs_usd_bps: null },
+        usd_covered_through: null,
+        usd_source: null,
+      }),
+    );
+    await chooseCripto(user);
+
+    expect(screen.getByText("Ainda não há dados do dólar. Atualize os índices em Configurações → Dados e proteção.")).toBeInTheDocument();
+    expect(screen.getByText("Diferença vs. dólar").parentElement).toHaveTextContent("—");
+    expect(screen.getByRole("link", { name: "Atualizar índices" })).toBeInTheDocument();
+  });
+
+  it("dólar que para antes do fim do período: avisa até que dia ele vai", async () => {
+    const user = userEvent.setup();
+    renderTab(
+      cripto({
+        points: [performance().points[0], { ...performance().points[1], usd_bps: null }],
+        summary: { ...performance().summary, usd_bps: null, vs_usd_bps: null },
+        usd_covered_through: "2026-09-12",
+      }),
+    );
+    await chooseCripto(user);
+
+    expect(screen.getByText("O dólar só vai até 12/09/2026; atualize os índices.")).toBeInTheDocument();
   });
 });
 
@@ -265,7 +478,7 @@ describe("Sua carteira vs. mercado a partir dos saldos digitados", () => {
     renderTab(
       performance({
         observations_count: 1,
-        points: [{ date: "2026-10-31", value_cents: 1_000_000, flows_cents: 0, portfolio_bps: 0, cdi_bps: 0, ibovespa_bps: 0 }],
+        points: [{ date: "2026-10-31", value_cents: 1_000_000, flows_cents: 0, portfolio_bps: 0, cdi_bps: 0, ibovespa_bps: 0, ipca_bps: 0, usd_bps: null }],
         summary: { ...performance().summary, start_date: "2026-10-31", end_date: "2026-10-31", portfolio_bps: 0, cdi_bps: 0, vs_cdi_bps: 0, flows_cents: 0 },
         warnings: ["Ainda faltam saldos em duas datas diferentes neste intervalo para comparar o desempenho."],
       }),
@@ -281,7 +494,7 @@ describe("Sua carteira vs. mercado a partir dos saldos digitados", () => {
     renderTab(
       performance({
         observations_count: 1,
-        points: [{ date: "2026-09-30", value_cents: 1_000_000, flows_cents: 0, portfolio_bps: null, cdi_bps: null, ibovespa_bps: null }],
+        points: [{ date: "2026-09-30", value_cents: 1_000_000, flows_cents: 0, portfolio_bps: null, cdi_bps: null, ibovespa_bps: null, ipca_bps: null, usd_bps: null }],
         summary: {
           ...performance().summary,
           start_date: null,

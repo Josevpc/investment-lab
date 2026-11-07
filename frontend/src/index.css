@@ -70,6 +70,8 @@
   --chart-cat-5: #8b5e7d; /* ameixa */
   --chart-cat-6: #a99b80; /* areia */
   --chart-index: #5b7c93;
+  --chart-ipca: #8b5e7d; /* ameixa: inflação */
+  --chart-usd: #c46f4e; /* argila: câmbio */
 }
 
 @theme inline {

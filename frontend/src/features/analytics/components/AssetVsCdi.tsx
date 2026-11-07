@@ -2,7 +2,7 @@ import { useState } from "react";
 import { formatBRL, formatDate, formatPercent, formatPointsDiff, formatSignedPercent } from "@/shared/lib/format";
 import { Button, Empty, ErrorBox, Loading, Money, Notice } from "@/shared/ui";
 import { useAssetVsCdi, useIrRate } from "../hooks";
-import { ibovespaGap, ibovespaGapMessage } from "../lib/ibovespa";
+import { benchmarkGap, benchmarkGapMessage } from "../lib/benchmarks";
 import type { AssetFlow, AssetVsCdi as AssetVsCdiData } from "../types";
 import { IrRateSelect } from "./IrRateSelect";
 
@@ -46,9 +46,13 @@ export function AssetVsCdi({ assetId }: { assetId: number }) {
   const query = useAssetVsCdi(assetId, from ?? undefined, to ?? undefined, irRate);
   const p = query.data;
   const custom = from !== null || to !== null;
-  // O Ibovespa só serve de referência para o que não é renda fixa.
+  // Fora da renda fixa há uma referência de mercado: o dólar para a cripto, o Ibovespa para o resto.
   const fixedIncome = p?.class_key === "renda_fixa";
-  const gap = p && !fixedIncome ? ibovespaGap([p]) : null;
+  const crypto = p?.class_key === "cripto";
+  const reference = crypto
+    ? { key: "usd" as const, name: "dólar", bps: p?.usd_bps ?? null, diff: p?.vs_usd_bps ?? null, through: p?.usd_covered_through ?? null }
+    : { key: "ibovespa" as const, name: "Ibovespa", bps: p?.ibovespa_bps ?? null, diff: p?.vs_ibovespa_bps ?? null, through: p?.ibovespa_covered_through ?? null };
+  const gap = p && !fixedIncome ? benchmarkGap([{ bps: reference.bps, through: reference.through }]) : null;
 
   return (
     <div className="space-y-4">
@@ -106,7 +110,7 @@ export function AssetVsCdi({ assetId }: { assetId: number }) {
 
       {p && p.start_date && p.end_date && (
         <>
-          {/* Fica numa gaveta estreita: 5 colunas apertariam "−2,95 p.p."; com o Ibovespa, 3 + 2. */}
+          {/* Fica numa gaveta estreita: 5 colunas apertariam "−2,95 p.p."; com a referência (Ibovespa ou dólar), 3 + 2. */}
           <div className={`grid grid-cols-2 gap-3 ${fixedIncome ? "lg:grid-cols-3" : "sm:grid-cols-3"}`}>
             {fixedIncome ? (
               <>
@@ -138,14 +142,14 @@ export function AssetVsCdi({ assetId }: { assetId: number }) {
             )}
             {!fixedIncome && (
               <Metric
-                label="Variação contra o Ibovespa"
-                value={p.vs_ibovespa_bps === null ? "—" : formatPointsDiff(p.vs_ibovespa_bps)}
+                label={`Variação contra o ${reference.name}`}
+                value={reference.diff === null ? "—" : formatPointsDiff(reference.diff)}
                 hint={
                   gap
-                    ? p.warnings.some((w) => w.includes("Ibovespa"))
-                      ? "sem Ibovespa no período: veja o aviso abaixo"
-                      : ibovespaGapMessage(gap)
-                    : `variação ${p.return_bps === null ? "—" : formatSignedPercent(p.return_bps)} contra Ibovespa ${p.ibovespa_bps === null ? "—" : formatSignedPercent(p.ibovespa_bps)}`
+                    ? p.warnings.some((w) => w.toLowerCase().includes(reference.name.toLowerCase()))
+                      ? `sem ${reference.name} no período: veja o aviso abaixo`
+                      : benchmarkGapMessage(reference.key, gap)
+                    : `variação ${p.return_bps === null ? "—" : formatSignedPercent(p.return_bps)} contra ${reference.name} ${reference.bps === null ? "—" : formatSignedPercent(reference.bps)}`
                 }
               />
             )}
@@ -291,6 +295,13 @@ export function AssetVsCdi({ assetId }: { assetId: number }) {
         </>
       )}
 
+      {crypto && p?.start_date && (
+        // O dólar mostra quanto do ganho em reais pode ter vindo só do câmbio, mas não é uma conta exata.
+        <Notice>
+          O dólar (PTAX) é só uma referência. Sem a cotação em dólar de cada moeda, não dá para separar o que veio da cripto do que veio do
+          câmbio.
+        </Notice>
+      )}
       {p?.tax_exempt && <Notice>Isento de IR: o saldo bruto já é o que você recebe.</Notice>}
       {p?.balance_is_net && (
         <Notice>
@@ -309,7 +320,7 @@ export function AssetVsCdi({ assetId }: { assetId: number }) {
           <strong>Como calculamos:</strong> {p.method} Em períodos curtos e com valores pequenos, centavos e o dia do aporte pesam: use o
           resultado como referência, não como certeza.
           {p.cdi_covered_through && ` CDI diário até ${formatDate(p.cdi_covered_through)}.`}
-          {!fixedIncome && p.ibovespa_covered_through && ` Ibovespa até ${formatDate(p.ibovespa_covered_through)}.`}
+          {!fixedIncome && reference.through && ` ${crypto ? "Dólar" : "Ibovespa"} até ${formatDate(reference.through)}.`}
         </Notice>
       )}
     </div>

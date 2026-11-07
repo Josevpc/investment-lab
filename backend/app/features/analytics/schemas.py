@@ -61,6 +61,10 @@ class PerformancePoint(BaseModel):
     cdi_bps: int | None
     # Variação do Ibovespa (só pontos, sem dividendos) desde o ponto-base; None se faltar dado.
     ibovespa_bps: int | None = None
+    # Inflação (IPCA) acumulada desde o ponto-base, pro rata dos dias; None se o mês não saiu.
+    ipca_bps: int | None = None
+    # Variação do dólar (PTAX de venda) desde o ponto-base. Só no escopo "cripto"; senão None.
+    usd_bps: int | None = None
 
 
 class PerformanceSummary(BaseModel):
@@ -72,6 +76,15 @@ class PerformanceSummary(BaseModel):
     ibovespa_bps: int | None = None
     vs_ibovespa_bps: int | None = None  # carteira menos Ibovespa, em pontos-base de p.p.
     flows_cents: int = 0  # fluxo externo líquido de todo o período
+    # IPCA no último ponto que o IPCA cobre (`ipca_date`), e a carteira menos o IPCA nesse mesmo
+    # ponto. O IPCA do mês corrente só sai depois do fim do mês, então `ipca_date` costuma ser
+    # anterior a `end_date`.
+    ipca_bps: int | None = None
+    vs_ipca_bps: int | None = None
+    ipca_date: dt.date | None = None
+    # Dólar no último ponto, só no escopo "cripto": variação e carteira menos dólar.
+    usd_bps: int | None = None
+    vs_usd_bps: int | None = None
 
 
 class StaleAsset(BaseModel):
@@ -100,6 +113,12 @@ class PerformanceOut(BaseModel):
     # Último fechamento do Ibovespa guardado (AAAA-MM-DD); None se não há nenhum.
     ibovespa_covered_through: str | None = None
     ibovespa_source: str | None = None  # cita a B3; None enquanto não há dado do Ibovespa
+    # Último mês de IPCA divulgado e guardado (AAAA-MM); None se não há nenhum.
+    ipca_covered_through: str | None = None
+    ipca_source: str | None = None  # None enquanto não há IPCA
+    # Dólar, só no escopo "cripto": última cotação guardada (AAAA-MM-DD) e a fonte.
+    usd_covered_through: str | None = None
+    usd_source: str | None = None
 
 
 class AssetFlowOut(BaseModel):
@@ -165,3 +184,7 @@ class AssetPerformanceOut(BaseModel):
     ibovespa_bps: int | None = None
     vs_ibovespa_bps: int | None = None  # return_bps menos ibovespa_bps
     ibovespa_covered_through: dt.date | None = None  # pregão usado no fim do período
+    # Dólar ponto a ponto entre start_date e end_date, só para cripto; None nas demais categorias.
+    usd_bps: int | None = None
+    vs_usd_bps: int | None = None  # return_bps menos usd_bps
+    usd_covered_through: dt.date | None = None  # cotação usada no fim do período

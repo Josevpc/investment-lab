@@ -2,5 +2,12 @@
 export { AssetVsCdi } from "./components/AssetVsCdi";
 export { IrRateSelect } from "./components/IrRateSelect";
 export { useAssetsPeriodVsCdi, useAssetsVsCdi, useIrRate, usePerformance, useTrajectory } from "./hooks";
-export { ibovespaByDefault, ibovespaGap, ibovespaGapMessage, type IbovespaGap } from "./lib/ibovespa";
+export {
+  benchmarkGap,
+  benchmarkGapMessage,
+  ibovespaByDefault,
+  usdByDefault,
+  type BenchmarkGap,
+  type BenchmarkKey,
+} from "./lib/benchmarks";
 export type { AssetVsCdi as AssetVsCdiResult, Performance, StaleAsset, Trajectory } from "./types";

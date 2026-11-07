@@ -2,22 +2,42 @@ import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { legendText } from "@/shared/lib/chartLegend";
-import { ibovespaByDefault, ibovespaGap, ibovespaGapMessage, usePerformance, type StaleAsset } from "@/features/analytics";
+import {
+  benchmarkGap,
+  benchmarkGapMessage,
+  ibovespaByDefault,
+  usdByDefault,
+  usePerformance,
+  type BenchmarkKey,
+  type StaleAsset,
+} from "@/features/analytics";
 import { useAssetGroups } from "@/features/groups";
 import { useAssetClasses } from "@/features/portfolio";
 import { useDismissed } from "@/shared/lib/preferences";
-import { AXIS, GOLD, GRID, INDEX, tooltipStyle } from "@/shared/lib/chart";
-import { formatDate, formatPointsDiff, formatSignedPercent, formatTickDate } from "@/shared/lib/format";
+import { AXIS, DASH, GOLD, GRID, INDEX, IPCA, tooltipStyle, USD } from "@/shared/lib/chart";
+import { formatDate, formatMonth, formatPointsDiff, formatSignedPercent, formatTickDate } from "@/shared/lib/format";
 import { ButtonLink, Card, Empty, ErrorBox, inputClass, Loading, Money, Notice, noticeClass } from "@/shared/ui";
 import { rangeLabel, rangeStart, type RangeKey } from "../lib/range";
 
 // A legenda segue a ordem de leitura (carteira primeiro), não a alfabética padrão do Recharts.
-const LEGEND_ORDER = ["Carteira", "CDI", "Ibovespa"];
+const LEGEND_ORDER = ["Carteira", "CDI", "Ibovespa", "IPCA", "Dólar"];
 
 const UPDATE_HREF = "/carteira/atualizar";
+const UPDATE_INDEXES_HREF = "/configuracoes#dados";
 const MAX_STALE_LISTED = 5;
 
 const dateTime = (iso: string) => `${formatDate(iso.slice(0, 10))} às ${iso.slice(11, 16)}`;
+
+/** Colunas das métricas por quantidade de referências extras ligadas (além do CDI): retornos numa linha, diferenças e fluxo na outra. */
+const METRIC_COLUMNS = ["lg:grid-cols-4", "lg:grid-cols-3", "lg:grid-cols-4", "lg:grid-cols-4 xl:grid-cols-5"];
+
+/** "A", "A e B", "A, B e C". */
+function joinList(items: readonly string[]): string {
+  return items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} e ${items[items.length - 1]}`;
+}
+
+/** Um aviso do back-end que fala de uma referência só importa com a série ligada. */
+const WARNING_MENTIONS: Record<BenchmarkKey, RegExp> = { ibovespa: /Ibovespa/, ipca: /IPCA/, usd: /dólar/i };
 
 const days = (n: number) => `${n} ${n === 1 ? "dia" : "dias"}`;
 
@@ -42,6 +62,18 @@ function Flow({ cents }: { cents: number }) {
         <Money cents={Math.abs(cents)} />
       </span>
     </>
+  );
+}
+
+/** Fonte e até quando vão os dados de uma referência; sem dado, diz onde baixar. */
+function SourceLine({ name, source, through }: { name: string; source: string | null; through: string | null }) {
+  return (
+    <p className="text-xs text-slate-500 dark:text-slate-400">
+      {name}:{" "}
+      {through
+        ? `${[source, `dados até ${through}`].filter(Boolean).join(", ")}.`
+        : "ainda não baixado (Configurações → Dados e proteção)."}
+    </p>
   );
 }
 
@@ -75,6 +107,9 @@ export function PerformanceTab({ range }: { range: RangeKey }) {
   const [includeReserve, setIncludeReserve] = useState(false);
   const [showCdi, setShowCdi] = useState(true);
   const [showIbovespa, setShowIbovespa] = useState(ibovespaByDefault("total"));
+  // O IPCA começa desligado em todos os escopos; o dólar só existe (e já abre ligado) na categoria Cripto.
+  const [showIpca, setShowIpca] = useState(false);
+  const [showUsd, setShowUsd] = useState(usdByDefault("total"));
   const [noteDismissed, dismissNote] = useDismissed("performance-method-change");
 
   const classes = useAssetClasses(true);
@@ -97,22 +132,44 @@ export function PerformanceTab({ range }: { range: RangeKey }) {
     Carteira: point.portfolio_bps === null ? null : point.portfolio_bps / 100,
     CDI: point.cdi_bps === null ? null : point.cdi_bps / 100,
     Ibovespa: point.ibovespa_bps === null ? null : point.ibovespa_bps / 100,
+    IPCA: point.ipca_bps === null ? null : point.ipca_bps / 100,
+    Dólar: point.usd_bps === null ? null : point.usd_bps / 100,
   }));
   const canChart = rows.filter((r) => r.Carteira !== null).length >= 2;
   // Com uma data só, o back-end devolve 0% (início = fim): isso não é um resultado, então mostramos "—".
   const comparable = canChart && (p?.observations_count ?? 0) >= 2;
   const metric = (bps: number | null, format: (bps: number) => string) => (bps === null || !comparable ? "—" : format(bps));
   const pct = (value: number | null) => (value === null ? "—" : formatSignedPercent(Math.round(value * 100)));
-  // O aviso de Ibovespa ausente só importa com a série ligada; se o back-end já avisou, não repetimos.
+  const shown: Record<BenchmarkKey, boolean> = { ibovespa: showIbovespa, ipca: showIpca, usd: showUsd };
+  // O aviso de uma referência ausente só importa com a série ligada; se o back-end já avisou, não repetimos.
   // Sem duas datas, o vazio abaixo já explica; os outros avisos não teriam o que comentar.
-  const warnings = (p?.warnings ?? []).filter(
-    (w) => comparable && (showIbovespa || !w.includes("Ibovespa")),
-  );
-  const gap =
-    p && s && showIbovespa && !warnings.some((w) => w.includes("Ibovespa"))
-      ? ibovespaGap([{ ibovespa_bps: s.ibovespa_bps, ibovespa_covered_through: p.ibovespa_covered_through }])
-      : null;
-  if (gap) warnings.push(ibovespaGapMessage(gap));
+  const keys = Object.keys(shown) as BenchmarkKey[];
+  const warnings = (p?.warnings ?? []).filter((w) => comparable && keys.every((key) => shown[key] || !WARNING_MENTIONS[key].test(w)));
+  if (p && s) {
+    const coverage: Record<BenchmarkKey, { bps: number | null; through: string | null }> = {
+      ibovespa: { bps: s.ibovespa_bps, through: p.ibovespa_covered_through },
+      ipca: { bps: s.ipca_bps, through: p.ipca_covered_through },
+      usd: { bps: s.usd_bps, through: p.usd_covered_through },
+    };
+    for (const key of keys) {
+      if (!shown[key] || warnings.some((w) => WARNING_MENTIONS[key].test(w))) continue;
+      const gap = benchmarkGap([coverage[key]]);
+      if (gap) warnings.push(benchmarkGapMessage(key, gap));
+    }
+  }
+  // Qualquer aviso sobre uma referência termina no mesmo lugar: atualizar os índices.
+  const needsIndexUpdate = warnings.some((w) => keys.some((key) => shown[key] && WARNING_MENTIONS[key].test(w)));
+  const extraRefs = keys.filter((key) => shown[key]).length;
+  // O IPCA sai com atraso: o último mês dele costuma ficar antes do fim do período, e a tela diz até quando vai.
+  const ipcaThrough = s?.ipca_date ? s.ipca_date.slice(0, 7) : null;
+  const ipcaPartial = ipcaThrough !== null && s?.end_date != null && ipcaThrough < s.end_date.slice(0, 7);
+  const chartSeries = [
+    p?.scope_label ?? "",
+    ...(showCdi ? ["CDI"] : []),
+    ...(showIbovespa ? ["Ibovespa"] : []),
+    ...(showIpca ? ["IPCA"] : []),
+    ...(showUsd ? ["Dólar"] : []),
+  ];
 
   return (
     <div id="panel-desempenho" role="tabpanel" aria-labelledby="tab-desempenho" className="space-y-6">
@@ -131,10 +188,11 @@ export function PerformanceTab({ range }: { range: RangeKey }) {
               className={`${inputClass} w-auto!`}
               value={scope}
               onChange={(e) => {
-                // Trocar o escopo volta ao padrão dele (Ibovespa ligado só nas categorias de bolsa); a pessoa pode mudar depois.
+                // Trocar o escopo volta ao padrão dele (Ibovespa nas categorias de bolsa, dólar só na Cripto); a pessoa pode mudar depois.
                 setScope(e.target.value);
                 const group = activeGroups.find((g) => `group:${g.id}` === e.target.value);
                 setShowIbovespa(ibovespaByDefault(e.target.value, group ? membersOf(group).map((c) => c.key) : undefined));
+                setShowUsd(usdByDefault(e.target.value));
               }}
             >
               <option value="total">Carteira total</option>
@@ -168,13 +226,13 @@ export function PerformanceTab({ range }: { range: RangeKey }) {
               )}
             </select>
           </label>
-          <fieldset className="flex flex-wrap items-center gap-4 pb-2 text-sm">
+          <fieldset className="flex flex-wrap items-center gap-x-4 text-sm">
             <legend className="sr-only">Séries do gráfico</legend>
-            <label className="flex items-center gap-2">
+            <label className="flex min-h-10 items-center gap-2">
               <input type="checkbox" checked={showCdi} onChange={(e) => setShowCdi(e.target.checked)} className="size-4 accent-blue-500" />
               CDI
             </label>
-            <label className="flex items-center gap-2">
+            <label className="flex min-h-10 items-center gap-2">
               <input
                 type="checkbox"
                 checked={showIbovespa}
@@ -183,9 +241,19 @@ export function PerformanceTab({ range }: { range: RangeKey }) {
               />
               Ibovespa
             </label>
+            <label className="flex min-h-10 items-center gap-2">
+              <input type="checkbox" checked={showIpca} onChange={(e) => setShowIpca(e.target.checked)} className="size-4 accent-blue-500" />
+              IPCA
+            </label>
+            {scope === "cripto" && (
+              <label className="flex min-h-10 items-center gap-2">
+                <input type="checkbox" checked={showUsd} onChange={(e) => setShowUsd(e.target.checked)} className="size-4 accent-blue-500" />
+                Dólar
+              </label>
+            )}
           </fieldset>
           {scope === "total" && (
-            <label className="flex items-center gap-2 pb-2 text-sm">
+            <label className="flex min-h-10 items-center gap-2 text-sm">
               <input
                 type="checkbox"
                 checked={includeReserve}
@@ -232,17 +300,27 @@ export function PerformanceTab({ range }: { range: RangeKey }) {
               </div>
             )}
 
-            {/* Retornos na primeira linha, diferenças e fluxo na segunda (com o Ibovespa, 3 colunas; sem ele, 4). */}
-            <div className={`mb-5 grid grid-cols-2 gap-3 ${showIbovespa ? "lg:grid-cols-3" : "lg:grid-cols-4"}`}>
+            {/* Retornos na primeira linha, diferenças e fluxo na segunda: cada referência ligada acrescenta uma coluna. */}
+            <div className={`mb-5 grid grid-cols-2 gap-3 ${METRIC_COLUMNS[extraRefs]}`}>
               <Metric label={p.scope_label} value={metric(s.portfolio_bps, formatSignedPercent)} hint="retorno acumulado" />
               <Metric label="CDI" value={metric(s.cdi_bps, formatSignedPercent)} hint="mesmas datas" />
               {showIbovespa && (
                 <Metric label="Ibovespa" value={metric(s.ibovespa_bps, formatSignedPercent)} hint="mesmas datas" />
               )}
+              {showIpca && (
+                <Metric
+                  label="IPCA"
+                  value={metric(s.ipca_bps, formatSignedPercent)}
+                  hint={ipcaPartial ? `até ${formatMonth(ipcaThrough)}` : "inflação no período"}
+                />
+              )}
+              {showUsd && <Metric label="Dólar" value={metric(s.usd_bps, formatSignedPercent)} hint="PTAX, mesmas datas" />}
               <Metric label="Diferença vs. CDI" value={metric(s.vs_cdi_bps, formatPointsDiff)} />
               {showIbovespa && (
                 <Metric label="Diferença vs. Ibovespa" value={metric(s.vs_ibovespa_bps, formatPointsDiff)} />
               )}
+              {showIpca && <Metric label="Diferença vs. IPCA" value={metric(s.vs_ipca_bps, formatPointsDiff)} />}
+              {showUsd && <Metric label="Diferença vs. dólar" value={metric(s.vs_usd_bps, formatPointsDiff)} />}
               <Metric label="Fluxo no período" value={<Flow cents={s.flows_cents} />} hint="entrou (+) ou saiu (−); não é rendimento" />
             </div>
 
@@ -270,9 +348,7 @@ export function PerformanceTab({ range }: { range: RangeKey }) {
               <div
                 className="h-80"
                 role="img"
-                aria-label={`Gráfico de linhas com o retorno acumulado de ${p.scope_label}${showCdi ? ", do CDI" : ""}${
-                  showIbovespa ? " e do Ibovespa" : ""
-                }, de ${formatDate(s.start_date ?? rows[0].date)} a ${formatDate(s.end_date ?? rows[rows.length - 1].date)}. Os mesmos dados estão na tabela abaixo.`}
+                aria-label={`Gráfico de linhas com o retorno acumulado de ${joinList(chartSeries)}, de ${formatDate(s.start_date ?? rows[0].date)} a ${formatDate(s.end_date ?? rows[rows.length - 1].date)}. Os mesmos dados estão na tabela abaixo.`}
               >
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={rows} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
@@ -288,10 +364,16 @@ export function PerformanceTab({ range }: { range: RangeKey }) {
                     {/* Cada série tem um traço próprio (contínuo, tracejado, traço-ponto) e a legenda repete o traço. */}
                     <Line isAnimationActive={false} dataKey="Carteira" name={p.scope_label} stroke={GOLD} strokeWidth={3} dot={{ r: 3 }} legendType="plainline" connectNulls={false} />
                     {showCdi && (
-                      <Line isAnimationActive={false} dataKey="CDI" stroke="var(--color-emerald-500)" strokeWidth={2} strokeDasharray="6 4" dot={false} legendType="plainline" connectNulls={false} />
+                      <Line isAnimationActive={false} dataKey="CDI" stroke="var(--color-emerald-500)" strokeWidth={2} strokeDasharray={DASH.cdi} dot={false} legendType="plainline" connectNulls={false} />
                     )}
                     {showIbovespa && (
-                      <Line isAnimationActive={false} dataKey="Ibovespa" stroke={INDEX} strokeWidth={2} strokeDasharray="12 4 2 4" dot={false} legendType="plainline" connectNulls={false} />
+                      <Line isAnimationActive={false} dataKey="Ibovespa" stroke={INDEX} strokeWidth={2} strokeDasharray={DASH.ibovespa} dot={false} legendType="plainline" connectNulls={false} />
+                    )}
+                    {showIpca && (
+                      <Line isAnimationActive={false} dataKey="IPCA" stroke={IPCA} strokeWidth={2} strokeDasharray={DASH.ipca} dot={false} legendType="plainline" connectNulls={false} />
+                    )}
+                    {showUsd && (
+                      <Line isAnimationActive={false} dataKey="Dólar" stroke={USD} strokeWidth={2} strokeDasharray={DASH.usd} dot={false} legendType="plainline" connectNulls={false} />
                     )}
                   </LineChart>
                 </ResponsiveContainer>
@@ -305,7 +387,7 @@ export function PerformanceTab({ range }: { range: RangeKey }) {
               <div className="relative mt-3 overflow-x-auto" role="region" aria-label="Tabela de desempenho por data" tabIndex={0}>
                 <table className="w-full text-xs sm:text-sm">
                   <caption className="sr-only">
-                    Valor, fluxo e retorno acumulado em cada data com saldo: {p.scope_label}, CDI{showIbovespa ? " e Ibovespa" : ""}
+                    Valor, fluxo e retorno acumulado em cada data com saldo: {joinList([p.scope_label, "CDI", ...chartSeries.slice(showCdi ? 2 : 1)])}
                   </caption>
                   <thead className="text-left text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
                     <tr>
@@ -315,6 +397,8 @@ export function PerformanceTab({ range }: { range: RangeKey }) {
                       <th scope="col" className="pb-2 pl-3 text-right font-medium">Retorno: {p.scope === "total" ? "Carteira" : p.scope_label}</th>
                       <th scope="col" className="pb-2 pl-3 text-right font-medium">Retorno: CDI</th>
                       {showIbovespa && <th scope="col" className="pb-2 pl-3 text-right font-medium">Retorno: Ibovespa</th>}
+                      {showIpca && <th scope="col" className="pb-2 pl-3 text-right font-medium">Retorno: IPCA</th>}
+                      {showUsd && <th scope="col" className="pb-2 pl-3 text-right font-medium">Retorno: Dólar</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -326,6 +410,8 @@ export function PerformanceTab({ range }: { range: RangeKey }) {
                         <td className="tabular py-2 pl-3 text-right">{pct(row.Carteira)}</td>
                         <td className="tabular py-2 pl-3 text-right">{pct(row.CDI)}</td>
                         {showIbovespa && <td className="tabular py-2 pl-3 text-right">{pct(row.Ibovespa)}</td>}
+                        {showIpca && <td className="tabular py-2 pl-3 text-right">{pct(row.IPCA)}</td>}
+                        {showUsd && <td className="tabular py-2 pl-3 text-right">{pct(row.Dólar)}</td>}
                       </tr>
                     ))}
                   </tbody>
@@ -340,6 +426,13 @@ export function PerformanceTab({ range }: { range: RangeKey }) {
               {warnings.map((warning) => (
                 <Notice key={warning} tone="warn">{warning}</Notice>
               ))}
+              {needsIndexUpdate && (
+                <p className="text-sm">
+                  <Link to={UPDATE_INDEXES_HREF} className="font-semibold text-blue-700 underline hover:no-underline dark:text-blue-300">
+                    Atualizar índices
+                  </Link>
+                </p>
+              )}
               {/* O texto de método é longo: fica recolhido, mas a um clique e lido por leitor de tela. */}
               <details className={noticeClass("info")}>
                 <summary className="cursor-pointer font-medium">Como calculamos</summary>
@@ -353,14 +446,9 @@ export function PerformanceTab({ range }: { range: RangeKey }) {
                 {p.benchmark_updated_at ? `, atualizadas em ${dateTime(p.benchmark_updated_at)}` : ", ainda não baixadas (Configurações → Dados e proteção)"}
                 {p.cdi_covered_through ? `. CDI até ${formatDate(p.cdi_covered_through)}.` : "."}
               </p>
-              {showIbovespa && (
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Ibovespa:{" "}
-                  {p.ibovespa_covered_through
-                    ? `${[p.ibovespa_source, `dados até ${formatDate(p.ibovespa_covered_through)}`].filter(Boolean).join(", ")}.`
-                    : "ainda não baixado (Configurações → Dados e proteção)."}
-                </p>
-              )}
+              {showIbovespa && <SourceLine name="Ibovespa" source={p.ibovespa_source} through={p.ibovespa_covered_through && formatDate(p.ibovespa_covered_through)} />}
+              {showIpca && <SourceLine name="IPCA" source={p.ipca_source} through={p.ipca_covered_through && formatMonth(p.ipca_covered_through.slice(0, 7))} />}
+              {showUsd && <SourceLine name="Dólar" source={p.usd_source} through={p.usd_covered_through && formatDate(p.usd_covered_through)} />}
             </div>
           </>
         )}

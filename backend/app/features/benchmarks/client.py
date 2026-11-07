@@ -1,4 +1,4 @@
-"""Clientes das fontes públicas de referência: séries do Banco Central (SGS) e Ibovespa da B3.
+"""Clientes das fontes de referência: séries e dólar do Banco Central (SGS) e Ibovespa da B3.
 
 Sem chave e sem dependências extras.
 """
@@ -11,11 +11,13 @@ from collections.abc import Callable
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
-# Taxa acumulada no mês, em % a.m.: CDI (4391) e Selic (4390).
-SERIES_CODES = {"cdi": 4391, "selic": 4390}
-SERIES_LABELS = {"cdi": "CDI", "selic": "Selic"}
-SOURCE = "Banco Central do Brasil (SGS, séries 4391, 4390 e 12) e B3 (Ibovespa)"
+# Variação no mês, em % a.m.: CDI (4391), Selic (4390) e IPCA (433, do IBGE, repassado pelo SGS).
+SERIES_CODES = {"cdi": 4391, "selic": 4390, "ipca": 433}
+SERIES_LABELS = {"cdi": "CDI", "selic": "Selic", "ipca": "IPCA"}
+SOURCE = "Banco Central do Brasil (SGS, séries 4391, 4390, 433, 12 e 1) e B3 (Ibovespa)"
 INDEX_SOURCE = "B3 (Ibovespa, fechamento diário)"
+IPCA_SOURCE = "IBGE (IPCA, variação mensal), via Banco Central do Brasil (SGS, série 433)"
+USD_SOURCE = "Banco Central do Brasil (dólar PTAX de venda, SGS série 1)"
 URL = (
     "https://api.bcb.gov.br/dados/serie/bcdata.sgs.{code}/dados"
     "?formato=json&dataInicial={start}&dataFinal={end}"
@@ -26,6 +28,8 @@ DailyFetcher = Callable[[date, date], list[tuple[date, int]]]
 
 # CDI diário (% a.d.), uma linha por dia útil.
 DAILY_CDI_CODE = 12
+# Dólar comercial, cotação PTAX de venda (R$ por US$, 4 casas), uma linha por dia útil.
+DAILY_USD_CODE = 1
 # A API limita consultas de séries diárias a janelas de até 10 anos.
 DAILY_WINDOW_YEARS = 9
 
@@ -102,19 +106,48 @@ def parse_daily(payload: list[dict]) -> list[tuple[date, int]]:
     return rows
 
 
-def fetch_daily_cdi(start: date, end: date, *, timeout: int = 30) -> list[tuple[date, int]]:
+def _fetch_daily(
+    code: int,
+    parse: Callable[[list[dict]], list[tuple[date, int]]],
+    start: date,
+    end: date,
+    timeout: int,
+) -> list[tuple[date, int]]:
     rows: list[tuple[date, int]] = []
     window_start = start
     while window_start <= end:
         window_end = min(end, date(window_start.year + DAILY_WINDOW_YEARS, 12, 31))
         url = URL.format(
-            code=DAILY_CDI_CODE,
+            code=code,
             start=window_start.strftime("%d/%m/%Y"),
             end=window_end.strftime("%d/%m/%Y"),
         )
-        rows.extend(parse_daily(_get_sgs_rows(url, timeout)))
+        rows.extend(parse(_get_sgs_rows(url, timeout)))
         window_start = window_end + timedelta(days=1)
     return rows
+
+
+def fetch_daily_cdi(start: date, end: date, *, timeout: int = 30) -> list[tuple[date, int]]:
+    return _fetch_daily(DAILY_CDI_CODE, parse_daily, start, end, timeout)
+
+
+def usd_to_e4(value: str) -> int:
+    """ "5.4321" (R$ por US$) -> 54321 décimos de milésimo de real."""
+    return int((Decimal(value) * 10_000).to_integral_value(rounding=ROUND_HALF_UP))
+
+
+def parse_usd(payload: list[dict]) -> list[tuple[date, int]]:
+    """[{"data": "02/01/2026", "valor": "5.4321"}] -> [(date(2026, 1, 2), 54321)]."""
+    rows = []
+    for item in payload:
+        day, month, year = item["data"].split("/")
+        rows.append((date(int(year), int(month), int(day)), usd_to_e4(item["valor"])))
+    return rows
+
+
+def fetch_daily_usd(start: date, end: date, *, timeout: int = 30) -> list[tuple[date, int]]:
+    """PTAX de venda do dólar entre `start` e `end`, em décimos de milésimo de real."""
+    return _fetch_daily(DAILY_USD_CODE, parse_usd, start, end, timeout)
 
 
 # ---- Ibovespa (B3) -----------------------------------------------------------------------

@@ -1,5 +1,6 @@
 from bisect import bisect_right
 from collections.abc import Callable, Collection
+from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -33,6 +34,7 @@ from app.features.analytics.performance import (
     first_index_with_balance,
     index_return,
     index_returns,
+    ipca_returns,
     to_bps,
 )
 from app.features.analytics.schemas import (
@@ -48,7 +50,15 @@ from app.features.analytics.schemas import (
     TrajectoryOut,
     TrajectoryPoint,
 )
-from app.features.benchmarks.service import INDEX_SOURCE, index_level_on_or_before, index_levels
+from app.features.benchmarks.service import (
+    INDEX_SOURCE,
+    IPCA_SOURCE,
+    USD,
+    USD_SOURCE,
+    index_level_on_or_before,
+    index_levels,
+    monthly_rates,
+)
 from app.features.benchmarks.service import daily_rates as benchmark_daily_rates
 from app.features.benchmarks.service import get_status as benchmark_status
 from app.features.contributions.service import list_contributions
@@ -138,8 +148,13 @@ def get_trajectory(session: Session, data: TrajectoryIn) -> TrajectoryOut:
     )
 
 
-# ---- desempenho: carteira x CDI e Ibovespa -------------------------------------------------
+# ---- desempenho: carteira x CDI, Ibovespa, IPCA e dólar ------------------------------------
 
+# Sem a cotação em dólar de cada moeda, a comparação com o dólar é só uma referência.
+FX_LIMIT = (
+    "Sem a cotação em dólar de cada moeda, não dá para separar o que veio da cripto do que veio "
+    "do câmbio."
+)
 METHOD = (
     "O desempenho sai dos saldos que você digitou em cada data, e não dos fechamentos. Entre duas "
     "datas seguidas com saldo, o retorno é o ganho (saldo final menos saldo inicial menos os "
@@ -154,7 +169,11 @@ METHOD = (
     "datas: do fechamento da data-base ao de cada data (último pregão em ou antes da data). Os "
     "pontos do Ibovespa já trazem os proventos das ações do índice reinvestidos, enquanto os "
     "dividendos que você recebe ficam fora do saldo: quando eles são relevantes, a comparação "
-    "favorece um pouco o índice."
+    "favorece um pouco o índice. O IPCA (inflação) acumula os meses já divulgados e, dentro de um "
+    "mês, aplica só a parte proporcional dos dias corridos entre as datas; o mês que o IBGE ainda "
+    "não divulgou fica sem comparação, sem estimativa. Na cripto, o dólar (cotação PTAX de venda "
+    "do Banco Central) também é comparado ponto a ponto, com a última cotação em ou antes de cada "
+    "data. " + FX_LIMIT
 )
 INSUFFICIENT = (
     "Ainda faltam saldos em duas datas diferentes neste intervalo para comparar o desempenho."
@@ -164,6 +183,9 @@ GAP_TOLERANCE = timedelta(days=5)
 STALE_AFTER_DAYS = 10  # saldo mais velho que isso na data final vira aviso
 GROUP_SCOPE_PREFIX = "group:"  # escopo de um grupo de categorias: "group:<id>"
 NO_IBOVESPA = "Ainda não há dados do Ibovespa. Atualize em Configurações → Dados e proteção."
+NO_IPCA = "Ainda não há IPCA baixado. Atualize em Configurações → Dados e proteção."
+NO_USD = "Ainda não há cotação do dólar. Atualize em Configurações → Dados e proteção."
+CRYPTO_KEY = "cripto"  # só nesta categoria a tela compara com o dólar, no lugar do Ibovespa
 NO_CDI = (
     "Ainda não há CDI diário baixado para este período. Atualize em Configurações → "
     "Dados e proteção."
@@ -174,13 +196,19 @@ def _br(day: date) -> str:
     return day.strftime("%d/%m/%Y")
 
 
-def _recent_close(session: Session, day: date) -> tuple[date, int] | None:
-    """Fechamento do Ibovespa em ou antes de `day`, se tiver no máximo 5 dias de defasagem.
+def _br_month(month: str) -> str:
+    """AAAA-MM -> MM/AAAA."""
+    return f"{month[5:]}/{month[:4]}"
+
+
+def _recent_close(session: Session, day: date, series: str = "ibovespa") -> tuple[date, int] | None:
+    """Fechamento do Ibovespa (ou cotação do dólar) em ou antes de `day`, com no máximo 5 dias de
+    defasagem.
 
     Fim de semana e feriado usam o pregão anterior; um fechamento mais velho que isso significa
     buracos nos dados, e usá-lo compararia períodos diferentes.
     """
-    found = index_level_on_or_before(session, day)
+    found = index_level_on_or_before(session, day, series)
     if found is None or day - found[0] > GAP_TOLERANCE:
         return None
     return found
@@ -258,7 +286,7 @@ def _stale_assets(timeline: Timeline, member: Callable[[int], bool], end: date) 
 
 
 def _recent_closes(levels: list[tuple[date, int]], days: list[date]) -> list[int | None]:
-    """O fechamento do Ibovespa em ou antes de cada data, com a mesma tolerância de `_recent_close`.
+    """O fechamento (ou cotação) em ou antes de cada data, com a tolerância de `_recent_close`.
 
     `levels` são os fechamentos guardados, em ordem de data, lidos de uma vez.
     """
@@ -311,6 +339,7 @@ def get_performance(
     indexes = range(base, len(observations)) if base is not None else range(0)
 
     status = benchmark_status(session)
+    status_series = {item.series: item for item in status.series}
     cdi_through = date.fromisoformat(status.daily_through) if status.daily_through else None
     measurable = len(indexes) >= 2
     cdi_days = benchmark_daily_rates(session, "cdi", dates[base], dates[-1]) if measurable else []
@@ -322,6 +351,17 @@ def get_performance(
         closes[base:] = _recent_closes(levels, dates[base:])
     ibovespa = index_returns(closes, base)
 
+    ipca_rates = monthly_rates(session, "ipca")
+    # Sem nenhum IPCA guardado nem a data-base (0%) vira ponto: não há o que desenhar.
+    ipca = ipca_returns(dates, base, ipca_rates) if ipca_rates else [None] * len(dates)
+    with_usd = scope == CRYPTO_KEY
+    usd: list[Decimal | None] = [None] * len(dates)
+    if with_usd and base is not None:
+        usd_levels = index_levels(session, dates[base] - GAP_TOLERANCE, dates[-1], USD)
+        usd_closes: list[int | None] = [None] * len(dates)
+        usd_closes[base:] = _recent_closes(usd_levels, dates[base:])
+        usd = index_returns(usd_closes, base)
+
     points = [
         PerformancePoint(
             date=dates[i],
@@ -330,6 +370,8 @@ def get_performance(
             portfolio_bps=to_bps(chained.returns[i]),
             cdi_bps=to_bps(cdi[i]),
             ibovespa_bps=to_bps(ibovespa[i]),
+            ipca_bps=to_bps(ipca[i]),
+            usd_bps=to_bps(usd[i]),
         )
         for i in indexes
     ]
@@ -355,8 +397,39 @@ def get_performance(
                 f"O Ibovespa guardado vai até {_br(date.fromisoformat(status.index_through))} "
                 "e não cobre todo o período: a comparação com ele fica incompleta."
             )
+        if measurable:
+            ipca_through = status_series["ipca"].covered_through
+            if ipca_through is None:
+                warnings.append(NO_IPCA)
+            elif any(p.ipca_bps is None for p in points):
+                warnings.append(
+                    f"O IPCA divulgado vai até {_br_month(ipca_through)} e não cobre todo o "
+                    "período: os pontos depois disso ficam sem a comparação, porque o IPCA do "
+                    "mês só sai depois que ele termina."
+                )
+        if with_usd:
+            if status.usd_days == 0:
+                warnings.append(NO_USD)
+            elif any(p.usd_bps is None for p in points):
+                warnings.append(
+                    f"O dólar guardado vai até {_br(date.fromisoformat(status.usd_through))} "
+                    "e não cobre todo o período: a comparação com ele fica incompleta."
+                )
 
     last = points[-1] if points else None
+    # O IPCA do mês corrente não existe: compara no último ponto que ele cobre. A data-base (0%)
+    # sozinha não é comparação.
+    ipca_point = next((p for p in reversed(points[1:]) if p.ipca_bps is not None), None)
+    vs_ipca = (
+        ipca_point.portfolio_bps - ipca_point.ipca_bps
+        if ipca_point and ipca_point.portfolio_bps is not None
+        else None
+    )
+    vs_usd = (
+        last.portfolio_bps - last.usd_bps
+        if last and None not in (last.portfolio_bps, last.usd_bps)
+        else None
+    )
     vs_cdi = (
         last.portfolio_bps - last.cdi_bps
         if last and None not in (last.portfolio_bps, last.cdi_bps)
@@ -383,6 +456,11 @@ def get_performance(
             ibovespa_bps=last.ibovespa_bps if last else None,
             vs_ibovespa_bps=vs_ibovespa,
             flows_cents=sum(p.flows_cents for p in points),
+            ipca_bps=ipca_point.ipca_bps if ipca_point else None,
+            vs_ipca_bps=vs_ipca,
+            ipca_date=ipca_point.date if ipca_point else None,
+            usd_bps=last.usd_bps if last else None,
+            vs_usd_bps=vs_usd,
         ),
         method=METHOD,
         warnings=warnings,
@@ -392,6 +470,10 @@ def get_performance(
         cdi_covered_through=cdi_through,
         ibovespa_covered_through=status.index_through,
         ibovespa_source=INDEX_SOURCE if status.index_days else None,
+        ipca_covered_through=status_series["ipca"].covered_through,
+        ipca_source=IPCA_SOURCE if status_series["ipca"].months else None,
+        usd_covered_through=status.usd_through if with_usd else None,
+        usd_source=USD_SOURCE if with_usd and status.usd_days else None,
     )
 
 
@@ -410,7 +492,9 @@ CDI_METHOD = (
     "o Ibovespa é comparado ponto a ponto entre as datas inicial e final (último pregão em ou "
     "antes de cada uma): os pontos já trazem os proventos das ações do índice reinvestidos, "
     "enquanto os dividendos que você recebe ficam fora do saldo, então, quando eles são "
-    "relevantes, a comparação favorece um pouco o índice."
+    "relevantes, a comparação favorece um pouco o índice. Na cripto, o dólar (cotação PTAX de "
+    "venda do Banco Central) é comparado do mesmo modo, com a última cotação em ou antes de cada "
+    "data. " + FX_LIMIT
 )
 
 
@@ -455,27 +539,54 @@ def _measure(session: Session, start, end, flows: list[tuple[Flow, str]]):
     }
 
 
-def _asset_ibovespa(
-    session: Session, start: date, end: date, return_bps: int | None, warnings: list[str]
+@dataclass(frozen=True)
+class _Reference:
+    """Série de nível (fechamentos) que um ativo é comparado ponto a ponto, e os avisos dela."""
+
+    series: str
+    nothing_stored: str
+    name: str  # com artigo, para abrir frase: "O Ibovespa", "O dólar"
+    missing_start: str
+
+
+IBOVESPA_REFERENCE = _Reference(
+    "ibovespa", NO_IBOVESPA, "O Ibovespa", "Faltam fechamentos do Ibovespa no começo deste período."
+)
+USD_REFERENCE = _Reference(
+    USD, NO_USD, "O dólar", "Faltam cotações do dólar no começo deste período."
+)
+
+
+def _asset_reference(
+    session: Session,
+    reference: _Reference,
+    start: date,
+    end: date,
+    return_bps: int | None,
+    warnings: list[str],
 ) -> tuple[int | None, int | None, date | None]:
-    """Ibovespa ponto a ponto entre as duas datas, e a diferença para o retorno do ativo."""
-    through = index_level_on_or_before(session, end)
+    """Variação ponto a ponto entre as duas datas, e a diferença para o retorno do ativo."""
+    through = index_level_on_or_before(session, end, reference.series)
     covered = through[0] if through else None
-    opening, closing = _recent_close(session, start), _recent_close(session, end)
+    opening = _recent_close(session, start, reference.series)
+    closing = _recent_close(session, end, reference.series)
     if opening is None or closing is None:
-        if through is None and index_level_on_or_before(session, date.max) is None:
-            warnings.append(NO_IBOVESPA)
+        if (
+            through is None
+            and index_level_on_or_before(session, date.max, reference.series) is None
+        ):
+            warnings.append(reference.nothing_stored)
         elif opening is None:
-            warnings.append("Faltam fechamentos do Ibovespa no começo deste período.")
+            warnings.append(reference.missing_start)
         else:
             warnings.append(
-                f"O Ibovespa só vai até {_br(covered)}: o fim do período fica de fora da "
+                f"{reference.name} só vai até {_br(covered)}: o fim do período fica de fora da "
                 "comparação."
             )
         return None, None, covered
-    ibovespa = to_bps(index_return(opening[1], closing[1]))
-    vs = return_bps - ibovespa if return_bps is not None and ibovespa is not None else None
-    return ibovespa, vs, covered
+    change = to_bps(index_return(opening[1], closing[1]))
+    vs = return_bps - change if return_bps is not None and change is not None else None
+    return change, vs, covered
 
 
 def _check_ir_rate(ir_rate_bps: int) -> None:
@@ -578,8 +689,14 @@ def get_asset_performance(
     # Renda fixa não se compara com bolsa: nem calcula.
     ibovespa_bps = vs_ibovespa_bps = ibovespa_through = None
     if asset.class_key != FIXED_INCOME_KEY:
-        ibovespa_bps, vs_ibovespa_bps, ibovespa_through = _asset_ibovespa(
-            session, start_date, end_date, total["return_bps"], warnings
+        ibovespa_bps, vs_ibovespa_bps, ibovespa_through = _asset_reference(
+            session, IBOVESPA_REFERENCE, start_date, end_date, total["return_bps"], warnings
+        )
+    # Cripto também se compara com o dólar (a tela usa ele no lugar do Ibovespa).
+    usd_bps = vs_usd_bps = usd_through = None
+    if asset.class_key == CRYPTO_KEY:
+        usd_bps, vs_usd_bps, usd_through = _asset_reference(
+            session, USD_REFERENCE, start_date, end_date, total["return_bps"], warnings
         )
 
     steps = []
@@ -648,6 +765,9 @@ def get_asset_performance(
         ibovespa_bps=ibovespa_bps,
         vs_ibovespa_bps=vs_ibovespa_bps,
         ibovespa_covered_through=ibovespa_through,
+        usd_bps=usd_bps,
+        vs_usd_bps=vs_usd_bps,
+        usd_covered_through=usd_through,
     )
 
 

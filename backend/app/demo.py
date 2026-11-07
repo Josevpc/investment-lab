@@ -3,7 +3,7 @@
 Só roda num banco separado (`data/demo/`) e com `INVESTMENT_DEMO=1`; a tela mostra o selo
 "Modo demonstração". Tudo aqui é fictício: instituições, ativos, valores, aportes e até o CDI, que
 é sintético (taxa fixa por dia útil) para o app funcionar sem internet. O mesmo vale para os
-fechamentos do "Ibovespa" usados na comparação.
+fechamentos do "Ibovespa", o "IPCA" e o "dólar" usados na comparação.
 """
 
 import datetime as dt
@@ -76,6 +76,12 @@ DAILY_SELIC = Decimal("0.000425")
 # levemente positivo, para a comparação da demonstração ter altas e baixas.
 IBOVESPA_START_POINTS = 128_000
 IBOVESPA_DAILY_MOVES_BPS = [35, -20, 50, -45, 10, 25, -30, 15]
+# IPCA fictício por mês, em ppm (0,31% a 0,52%), em ciclo. O mês corrente fica de fora, como na
+# vida real (o IBGE só divulga depois do fim do mês): a demonstração mostra o "dado parcial".
+IPCA_MONTHLY_PPM = [4_200, 3_100, 5_200, 4_600, 3_800, 4_400]
+# Dólar fictício: começa em R$ 5,0000 (em décimos de milésimo) e oscila em ciclos de oito pregões.
+USD_START_E4 = 50_000
+USD_DAILY_MOVES_BPS = [20, -10, 15, -25, 5, 10, -15, 5]
 
 
 def _month_end(year: int, month: int) -> dt.date:
@@ -117,6 +123,8 @@ def _seed_benchmarks(
             ppm = _round(accumulated * 1_000_000)
             session.add(BenchmarkRate(series=series, month=month, rate_ppm=ppm, fetched_at=now))
     _seed_ibovespa(session, days, now)
+    _seed_ipca(session, list(months), end.strftime("%Y-%m"), now)
+    _seed_usd(session, days, now)
     session.commit()
     return [(day, DAILY_CDI) for day in days]
 
@@ -132,6 +140,24 @@ def _seed_ibovespa(session: Session, days: list[dt.date], now: dt.datetime) -> N
             BenchmarkIndexLevel(
                 series="ibovespa", date=day, close_e2=_round(close * 100), fetched_at=now
             )
+        )
+
+
+def _seed_ipca(session: Session, months: list[str], current_month: str, now: dt.datetime) -> None:
+    """IPCA fictício dos meses encerrados; o corrente fica sem linha (ainda não divulgado)."""
+    for i, month in enumerate(months):
+        if month != current_month:
+            ppm = IPCA_MONTHLY_PPM[i % len(IPCA_MONTHLY_PPM)]
+            session.add(BenchmarkRate(series="ipca", month=month, rate_ppm=ppm, fetched_at=now))
+
+
+def _seed_usd(session: Session, days: list[dt.date], now: dt.datetime) -> None:
+    """Cotações fictícias do dólar (PTAX): um passeio determinístico, sem relação com a real."""
+    quote = Decimal(USD_START_E4)
+    for i, day in enumerate(days):
+        quote = quote * (1 + Decimal(USD_DAILY_MOVES_BPS[i % len(USD_DAILY_MOVES_BPS)]) / 10_000)
+        session.add(
+            BenchmarkIndexLevel(series="usd", date=day, close_e2=_round(quote), fetched_at=now)
         )
 
 
