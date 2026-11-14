@@ -3,7 +3,13 @@
 O saldo nunca é gravado: é a soma dos lançamentos (`cash_entry`) até uma data. Interface pública
 para outras features: `default_account_id`, `create_institution_account`, `get_account`,
 `rename_institution_accounts`, `drop_institution_accounts`, `asset_has_entries`, `opening_date`,
-`consolidated_cash_cents`, `contributed_capital` e as funções `stage_*`.
+`consolidated_cash_cents`, `contributed_capital`, `reserved_left`, `reserved_in_class`,
+`reserved_by_class`, `reserved_by_class_on`, `reserve_flows_in_period`, `separated_by_month`,
+`reserved_used_by_movement` e as funções `stage_*`.
+
+Dinheiro separado para comprar: o caixa continua sendo a soma dos lançamentos; a separação só marca
+quanto dele já tem destino (`reserved_cents`), e o resto é o caixa livre (`free_cents`). Nenhuma
+operação do caixa pode deixar o separado maior que o saldo, em dia nenhum.
 
 As funções `stage_*` gravam na sessão sem confirmar: quem chama junta o lançamento do caixa com a
 operação da carteira e confirma tudo numa transação só (ou desfaz tudo).
@@ -11,9 +17,10 @@ operação da carteira e confirma tudo numa transação só (ou desfaz tudo).
 
 import uuid
 from collections import defaultdict
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import date
+from typing import NamedTuple, Protocol
 
 from sqlalchemy.orm import Session
 
@@ -22,7 +29,7 @@ from app.core.money import format_brl, format_date
 from app.features.cash import domain
 from app.features.cash import repository as repo
 from app.features.cash.domain import NewEntry
-from app.features.cash.models import Account, CashEntry
+from app.features.cash.models import Account, CashEntry, CashReservation, CashReservationUse
 from app.features.cash.schemas import (
     AccountBalance,
     AccountCapital,
@@ -33,12 +40,18 @@ from app.features.cash.schemas import (
     CashBalanceOut,
     CashTransferIn,
     CashTransferOut,
+    ClassReserved,
     ContributedCapitalOut,
     EntryIn,
     EntryOut,
     OpeningBalanceIn,
     ReconcileAdjustIn,
     ReconcileOut,
+    ReleaseIn,
+    ReservationIn,
+    ReservationOut,
+    ReservationResult,
+    ReservationsOut,
     StatementOut,
 )
 
@@ -64,7 +77,9 @@ def _require_account(session: Session, account_id: int) -> Account:
     return account
 
 
-def _account_out(account: Account, opening: date | None, balance_cents: int) -> AccountOut:
+def _account_out(
+    account: Account, opening: date | None, balance_cents: int, reserved_cents: int
+) -> AccountOut:
     return AccountOut(
         id=account.id,
         name=account.name,
@@ -73,14 +88,18 @@ def _account_out(account: Account, opening: date | None, balance_cents: int) -> 
         cash_enabled=opening is not None,
         opening_date=opening,
         balance_cents=balance_cents,
+        reserved_cents=reserved_cents,
+        free_cents=balance_cents - reserved_cents,
     )
 
 
 def list_accounts(session: Session, *, include_archived: bool = False) -> list[AccountOut]:
+    day = date.today()
     openings = repo.openings_by_account(session)
-    balances = repo.balances_by_account(session, date.today())
+    balances = repo.balances_by_account(session, day)
+    reserved = _reserved_by_account(session, day)
     return [
-        _account_out(a, openings.get(a.id), balances.get(a.id, 0))
+        _account_out(a, openings.get(a.id), balances.get(a.id, 0), reserved.get(a.id, 0))
         for a in repo.list_accounts(session, include_archived=include_archived)
     ]
 
@@ -88,10 +107,12 @@ def list_accounts(session: Session, *, include_archived: bool = False) -> list[A
 def get_account(session: Session, account_id: int) -> AccountOut:
     account = _require_account(session, account_id)
     opening = repo.get_opening(session, account_id)
+    today = date.today()
     return _account_out(
         account,
         opening.date if opening else None,
-        repo.balance(session, account_id, date.today()),
+        repo.balance(session, account_id, today),
+        _reserved_cents(session, account_id, today),
     )
 
 
@@ -186,6 +207,133 @@ def opening_date(session: Session, account_id: int) -> date | None:
     return opening.date if opening else None
 
 
+# ---- dinheiro separado: leitura e trava ----------------------------------------------------
+
+
+class ClassLabel(NamedTuple):
+    name: str
+    color: str
+
+
+class PurchaseMovement(Protocol):
+    """O que `stage_consume_reservations` lê do aporte: já com id (quem chama deu `flush`)."""
+
+    id: int
+    date: date
+    amount_cents: int
+
+
+def _class_labels(session: Session) -> dict[int, ClassLabel]:
+    """Nome e cor de cada categoria, arquivadas inclusive (o separado delas continua valendo).
+
+    A carteira importa este serviço, então o import é tardio para não fechar um ciclo.
+    """
+    from app.features.portfolio.service import list_asset_classes
+
+    return {
+        c.id: ClassLabel(c.name, c.color)
+        for c in list_asset_classes(session, include_archived=True)
+    }
+
+
+def _to_domain(
+    reservations: Sequence[CashReservation], uses: Sequence[CashReservationUse]
+) -> tuple[list[domain.Reservation], list[domain.ReservationUse]]:
+    return (
+        [domain.Reservation(r.id, r.class_id, r.date, r.amount_cents) for r in reservations],
+        [domain.ReservationUse(u.reservation_id, u.kind, u.date, u.amount_cents) for u in uses],
+    )
+
+
+def _account_state(
+    session: Session, account_id: int
+) -> tuple[list[domain.Reservation], list[domain.ReservationUse]]:
+    """Separações e baixas da conta, já como valores puros do domínio."""
+    return _to_domain(
+        repo.list_reservations(session, account_id),
+        repo.list_reservation_uses(session, account_id),
+    )
+
+
+def _reserved_cents(session: Session, account_id: int, as_of: date) -> int:
+    """Quanto do caixa da conta está separado ao fim de `as_of`."""
+    reservations, uses = _account_state(session, account_id)
+    return sum(domain.outstanding(reservations, uses, as_of).values())
+
+
+def _reserved_by_account(session: Session, as_of: date) -> dict[int, int]:
+    all_rows = repo.list_reservations(session)
+    account_of = {r.id: r.account_id for r in all_rows}
+    reservations, uses = _to_domain(all_rows, repo.list_reservation_uses(session))
+    totals: dict[int, int] = defaultdict(int)
+    for item in domain.open_reservations(reservations, uses, as_of):
+        totals[account_of[item.id]] += item.remaining_cents
+    return dict(totals)
+
+
+def _free_shortfall(
+    session: Session,
+    account_id: int,
+    from_date: date,
+    *,
+    add: Sequence[tuple[date, int]] = (),
+    remove_ids: frozenset[int] = frozenset(),
+) -> int:
+    """Quanto falta no pior dia, de `from_date` em diante, para o separado caber no caixa da conta
+    depois da mudança descrita por `add` e `remove_ids` (que ainda não foi gravada). 0 = cabe."""
+    reservations, uses = _account_state(session, account_id)
+    if not reservations:  # sem nada separado, o saldo negativo já é barrado em outro lugar
+        return 0
+    rows = [
+        (e.date, e.amount_cents)
+        for e in repo.list_entries(session, account_id)
+        if e.id not in remove_ids
+    ]
+    rows.extend(add)
+    return domain.worst_free_shortfall(rows, reservations, uses, from_date)
+
+
+def _separated_names(session: Session, account_id: int) -> str:
+    """Categorias com dinheiro ainda separado na conta, em texto: "A", "A e B", "A, B e C"."""
+    reservations, uses = _account_state(session, account_id)
+    labels = _class_labels(session)
+    names = sorted(
+        labels[class_id].name for class_id in domain.outstanding(reservations, uses, date.max)
+    )
+    return ", ".join(names[:-1]) + " e " + names[-1] if len(names) > 1 else "".join(names)
+
+
+def _ensure_free_cash(
+    session: Session,
+    account: Account,
+    from_date: date,
+    *,
+    add: Sequence[tuple[date, int]] = (),
+    remove_ids: frozenset[int] = frozenset(),
+    action: str | None = None,
+) -> None:
+    """Recusa a mudança no caixa se, em algum dia, o separado passar do saldo (caixa livre < 0).
+
+    Mesmo desenho de `_ensure_non_negative`: com `action` (remover, alterar) o erro é 409; sem ele
+    (lançamento novo), 422. Os dois trazem `shortfall_cents` e mandam liberar o separado antes.
+    """
+    shortfall = _free_shortfall(session, account.id, from_date, add=add, remove_ids=remove_ids)
+    if shortfall == 0:
+        return
+    names = _separated_names(session, account.id)
+    if action is None:
+        raise InvalidInputError(
+            f"O caixa livre de {account.name} não cobre isso: {format_brl(shortfall)} está "
+            f"separado para {names}; libere antes.",
+            shortfall_cents=shortfall,
+        )
+    raise ConflictError(
+        f"Não dá para {action}: o caixa livre de {account.name} ficaria negativo. "
+        f"{format_brl(shortfall)} está separado para {names}; libere antes.",
+        shortfall_cents=shortfall,
+    )
+
+
 # ---- validação e gravação ------------------------------------------------------------------
 
 
@@ -269,6 +417,9 @@ def stage_entries(
         min(e.date for e in new),
         add=[(e.date, e.amount_cents) for e in new],
     )
+    _ensure_free_cash(
+        session, account, min(e.date for e in new), add=[(e.date, e.amount_cents) for e in new]
+    )
     rows = [
         CashEntry(
             account_id=account_id,
@@ -294,13 +445,11 @@ def stage_remove_entries(
     for entry in entries:
         by_account[entry.account_id].append(entry)
     for account_id, group in by_account.items():
-        _ensure_non_negative(
-            session,
-            _require_account(session, account_id),
-            min(e.date for e in group),
-            remove_ids=frozenset(e.id for e in group),
-            action=action,
-        )
+        account = _require_account(session, account_id)
+        first = min(e.date for e in group)
+        removed = frozenset(e.id for e in group)
+        _ensure_non_negative(session, account, first, remove_ids=removed, action=action)
+        _ensure_free_cash(session, account, first, remove_ids=removed, action=action)
     for entry in entries:
         session.delete(entry)
     session.flush()
@@ -333,14 +482,13 @@ def stage_change_movement(
                 f"A conta {account.name} só tem caixa a partir de {format_date(cutoff)} "
                 f"(saldo inicial); a nova data é {format_date(on_date)}."
             )
+        first = min([e.date for e in group] + [on_date])
+        added = [(on_date, amount_cents if e.amount_cents > 0 else -amount_cents) for e in group]
+        removed = frozenset(e.id for e in group)
         _ensure_non_negative(
-            session,
-            account,
-            min([e.date for e in group] + [on_date]),
-            add=[(on_date, amount_cents if e.amount_cents > 0 else -amount_cents) for e in group],
-            remove_ids=frozenset(e.id for e in group),
-            action="alterar",
+            session, account, first, add=added, remove_ids=removed, action="alterar"
         )
+        _ensure_free_cash(session, account, first, add=added, remove_ids=removed, action="alterar")
     for entry in entries:
         entry.date = on_date
         entry.amount_cents = amount_cents if entry.amount_cents > 0 else -amount_cents
@@ -412,12 +560,17 @@ def statement(
 
 def account_balance(session: Session, account_id: int, as_of: date | None = None) -> AccountBalance:
     account = _require_account(session, account_id)
+    day = as_of or date.today()
+    balance = repo.balance(session, account_id, day)
+    reserved = _reserved_cents(session, account_id, day)
     return AccountBalance(
         account_id=account.id,
         name=account.name,
         archived=account.archived,
         cash_enabled=repo.get_opening(session, account_id) is not None,
-        balance_cents=repo.balance(session, account_id, as_of or date.today()),
+        balance_cents=balance,
+        reserved_cents=reserved,
+        free_cents=balance - reserved,
     )
 
 
@@ -426,6 +579,7 @@ def cash_balance(session: Session, as_of: date | None = None) -> CashBalanceOut:
     day = as_of or date.today()
     openings = repo.openings_by_account(session)
     balances = repo.balances_by_account(session, day)
+    reserved = _reserved_by_account(session, day)
     accounts = [
         AccountBalance(
             account_id=a.id,
@@ -433,6 +587,8 @@ def cash_balance(session: Session, as_of: date | None = None) -> CashBalanceOut:
             archived=a.archived,
             cash_enabled=a.id in openings,
             balance_cents=balances.get(a.id, 0),
+            reserved_cents=reserved.get(a.id, 0),
+            free_cents=balances.get(a.id, 0) - reserved.get(a.id, 0),
         )
         for a in repo.list_accounts(session, include_archived=True)
         if not a.archived or balances.get(a.id, 0) != 0
@@ -624,3 +780,309 @@ def contributed_capital(
         contributed_cents=total.contributed_cents,
         by_account=by_account,
     )
+
+
+# ---- dinheiro separado: operações ----------------------------------------------------------
+
+
+def _require_reservation(session: Session, reservation_id: int) -> CashReservation:
+    reservation = repo.get_reservation(session, reservation_id)
+    if reservation is None:
+        raise NotFoundError("Separação não encontrada.")
+    return reservation
+
+
+def _reservation_out(
+    reservation: CashReservation, uses: Sequence[CashReservationUse], labels: dict[int, ClassLabel]
+) -> ReservationOut:
+    used = sum(u.amount_cents for u in uses if u.kind == domain.PURCHASE)
+    released = sum(u.amount_cents for u in uses if u.kind == domain.RELEASE)
+    return ReservationOut(
+        id=reservation.id,
+        account_id=reservation.account_id,
+        class_id=reservation.class_id,
+        class_name=labels[reservation.class_id].name,
+        date=reservation.date,
+        amount_cents=reservation.amount_cents,
+        used_cents=used,
+        released_cents=released,
+        remaining_cents=reservation.amount_cents - used - released,
+        deletable=not uses,
+    )
+
+
+def _uses_of(session: Session, reservation: CashReservation) -> list[CashReservationUse]:
+    return [
+        u
+        for u in repo.list_reservation_uses(session, reservation.account_id)
+        if u.reservation_id == reservation.id
+    ]
+
+
+def _reservation_result(session: Session, reservation: CashReservation) -> ReservationResult:
+    """A separação como ficou e o caixa novo da conta (saldo, separado e livre de hoje)."""
+    today = date.today()
+    balance = repo.balance(session, reservation.account_id, today)
+    reserved = _reserved_cents(session, reservation.account_id, today)
+    out = _reservation_out(reservation, _uses_of(session, reservation), _class_labels(session))
+    return ReservationResult(
+        **out.model_dump(),
+        balance_cents=balance,
+        reserved_cents=reserved,
+        free_cents=balance - reserved,
+    )
+
+
+def list_reservations(
+    session: Session, account_id: int, *, include_closed: bool = False
+) -> ReservationsOut:
+    """O que está separado na conta hoje, por categoria e por separação.
+
+    Separação encerrada (usada ou liberada por inteiro) só vem com `include_closed`.
+    """
+    _require_account(session, account_id)
+    today = date.today()
+    rows = repo.list_reservations(session, account_id)
+    all_uses = repo.list_reservation_uses(session, account_id)
+    uses_of: dict[int, list[CashReservationUse]] = defaultdict(list)
+    for use in all_uses:
+        uses_of[use.reservation_id].append(use)
+    labels = _class_labels(session)
+    reservations, domain_uses = _to_domain(rows, all_uses)
+    by_class = domain.outstanding(reservations, domain_uses, today)
+    reserved = sum(by_class.values())
+    items = [_reservation_out(r, uses_of[r.id], labels) for r in rows]
+    return ReservationsOut(
+        reserved_cents=reserved,
+        free_cents=repo.balance(session, account_id, today) - reserved,
+        by_class=[
+            ClassReserved(
+                class_id=class_id,
+                class_name=labels[class_id].name,
+                color=labels[class_id].color,
+                remaining_cents=cents,
+            )
+            for class_id, cents in sorted(by_class.items())
+        ],
+        reservations=[i for i in items if include_closed or i.remaining_cents > 0],
+    )
+
+
+def create_reservation(session: Session, account_id: int, data: ReservationIn) -> ReservationResult:
+    """Separa dinheiro do caixa para comprar uma categoria (quem chama já conferiu a categoria).
+
+    Não move saldo. Sem `deposit`, o valor precisa caber no caixa livre em todos os dias daí em
+    diante; com `deposit`, o depósito avulso (dinheiro novo, sem compra ligada) e a separação nascem
+    juntos, na mesma transação.
+    """
+    account, cutoff = _require_cash_account(session, account_id)
+    on_date = data.date or date.today()
+    if on_date > date.today():
+        raise InvalidInputError("A data da separação não pode ser no futuro.")
+    if on_date < cutoff:
+        raise InvalidInputError(
+            f"A conta {account.name} só tem caixa a partir de {format_date(cutoff)} "
+            f"(saldo inicial); a separação é de {format_date(on_date)}."
+        )
+    with _atomic(session):
+        if data.deposit:
+            deposit = NewEntry(on_date, domain.DEPOSIT, data.amount_cents)
+            stage_entries(session, account_id, [deposit])
+        reservation = CashReservation(
+            account_id=account_id,
+            class_id=data.class_id,
+            date=on_date,
+            amount_cents=data.amount_cents,
+        )
+        session.add(reservation)
+        session.flush()  # a conferência abaixo enxerga a separação nova
+        shortfall = _free_shortfall(session, account_id, on_date)
+        if shortfall:
+            raise InvalidInputError(
+                f"O caixa livre de {account.name} não cobre {format_brl(data.amount_cents)}: "
+                f"faltam {format_brl(shortfall)}. Deposite antes ou marque “Depositar agora e "
+                "separar”.",
+                shortfall_cents=shortfall,
+            )
+    return _reservation_result(session, reservation)
+
+
+def _stage_use(
+    session: Session,
+    reservation: CashReservation,
+    kind: str,
+    on_date: date,
+    cents: int,
+    movement_id: int | None = None,
+) -> None:
+    """Grava uma baixa da separação (sem confirmar). A separação em si nunca é editada.
+
+    Recusa baixa anterior à separação e baixas que somem mais que o valor separado: o banco não tem
+    essa trava, porque é uma soma entre linhas.
+    """
+    if on_date < reservation.date:
+        label = "liberação" if kind == domain.RELEASE else "compra"
+        raise InvalidInputError(
+            f"A {label} não pode ser anterior à separação, de {format_date(reservation.date)}."
+        )
+    reservations, uses = _account_state(session, reservation.account_id)
+    new_use = domain.ReservationUse(reservation.id, kind, on_date, cents)
+    if domain.overused_reservations(reservations, [*uses, new_use]):
+        raise InvalidInputError(
+            "O valor passa do que ainda está separado na separação de "
+            f"{format_date(reservation.date)}."
+        )
+    session.add(
+        CashReservationUse(
+            reservation_id=reservation.id,
+            kind=kind,
+            date=on_date,
+            amount_cents=cents,
+            movement_id=movement_id,
+        )
+    )
+    session.flush()
+
+
+def release_reservation(
+    session: Session, reservation_id: int, data: ReleaseIn
+) -> ReservationResult:
+    """Devolve ao caixa livre o que ainda está separado (tudo, ou `amount_cents`).
+
+    Grava uma baixa do tipo liberação; a separação original e o mês dela ficam como eram.
+    """
+    reservation = _require_reservation(session, reservation_id)
+    on_date = data.date or date.today()
+    if on_date > date.today():
+        raise InvalidInputError("A data da liberação não pode ser no futuro.")
+    remaining = reservation.amount_cents - sum(
+        u.amount_cents for u in _uses_of(session, reservation)
+    )
+    if remaining == 0:
+        raise InvalidInputError("Essa separação já foi usada ou liberada por inteiro.")
+    cents = remaining if data.amount_cents is None else data.amount_cents
+    if cents > remaining:
+        raise InvalidInputError(
+            f"Só restam {format_brl(remaining)} separados nessa separação; não dá para liberar "
+            f"{format_brl(cents)}.",
+            remaining_cents=remaining,
+        )
+    with _atomic(session):
+        _stage_use(session, reservation, domain.RELEASE, on_date, cents)
+    return _reservation_result(session, reservation)
+
+
+def delete_reservation(session: Session, reservation_id: int) -> None:
+    """Exclui uma separação sem uso nem liberação: só para corrigir um erro de digitação."""
+    reservation = _require_reservation(session, reservation_id)
+    if _uses_of(session, reservation):
+        raise ConflictError(
+            "Essa separação já foi usada em compra ou liberada, então não pode ser excluída. "
+            "Para devolver o que sobrou ao caixa livre, libere o restante."
+        )
+    with _atomic(session):
+        session.delete(reservation)
+
+
+def stage_consume_reservations(
+    session: Session, account_id: int, class_id: int, movement: PurchaseMovement
+) -> int:
+    """Gasta o separado da categoria numa compra: das separações mais antigas às mais novas.
+
+    Grava uma baixa de compra por separação tocada, ligada ao movimento, sem confirmar. Devolve
+    quanto saiu do separado; o que sobrar da compra sai do caixa livre. Chame antes de gravar o
+    lançamento de compra no caixa: assim a trava do separado já enxerga o separado consumido.
+    """
+    reservations, uses = _account_state(session, account_id)
+    rows = {r.id: r for r in repo.list_reservations(session, account_id)}
+    open_items = [
+        item
+        for item in domain.open_reservations(reservations, uses, movement.date)
+        if item.class_id == class_id
+    ]
+    slices, _free = domain.fifo_consume(open_items, movement.amount_cents, movement.date)
+    for reservation_id, cents in slices:
+        _stage_use(
+            session, rows[reservation_id], domain.PURCHASE, movement.date, cents, movement.id
+        )
+    return sum(cents for _, cents in slices)
+
+
+def stage_release_movement_uses(session: Session, movement_id: int) -> int:
+    """Apaga as baixas de compra de um movimento (sem confirmar): o separado volta a ficar em
+    aberto. Devolve quanto voltou. Quem chama confere o caixa depois, porque o separado cresce."""
+    uses = repo.uses_for_movement(session, movement_id)
+    for use in uses:
+        session.delete(use)
+    session.flush()
+    return sum(use.amount_cents for use in uses)
+
+
+def stage_refresh_consumption(
+    session: Session, movement: PurchaseMovement, class_id: int, *, spend: bool
+) -> int | None:
+    """Refaz o consumo do separado de uma compra corrigida (valor, data ou "fora da meta").
+
+    Apaga as baixas antigas e roda o consumo de novo com o valor e a data de agora, na ordem
+    determinística (separação mais antiga primeiro, depois id), sem confirmar. Com `spend` falso, a
+    compra só devolve o separado e não gasta mais nada. Devolve quanto saiu do separado, ou None se
+    o movimento não sai do caixa que já existia (aporte padrão, resgate...): aí nada muda.
+    """
+    entries = repo.entries_for_movement(session, movement.id)
+    if not domain.spends_existing_cash(e.kind for e in entries):
+        return None
+    stage_release_movement_uses(session, movement.id)
+    if not spend:
+        return 0
+    return stage_consume_reservations(session, entries[0].account_id, class_id, movement)
+
+
+def reserved_used_by_movement(session: Session) -> dict[int, int]:
+    """Quanto cada movimento da carteira gastou do separado (só os que gastaram)."""
+    return repo.purchase_uses_by_movement(session)
+
+
+def reserved_left(session: Session, account_id: int, class_id: int) -> int:
+    """Quanto continua separado para a categoria na conta, sem limite de data."""
+    reservations, uses = _account_state(session, account_id)
+    return domain.outstanding(reservations, uses, date.max).get(class_id, 0)
+
+
+def reserved_by_class(session: Session, as_of: date = date.max) -> dict[int, int]:
+    """Separado em aberto por categoria, em todas as contas, ao fim de `as_of` (padrão: sem limite
+    de data). Categoria sem nada não aparece."""
+    reservations, uses = _to_domain(
+        repo.list_reservations(session), repo.list_reservation_uses(session)
+    )
+    return domain.outstanding(reservations, uses, as_of)
+
+
+def reserved_by_class_on(session: Session, days: Iterable[date]) -> dict[date, dict[int, int]]:
+    """Separado em aberto por categoria ao fim de cada dia pedido, em todas as contas.
+
+    Lê o banco uma vez só: serve a evolução, que pede o separado de cada ponto do gráfico.
+    """
+    reservations, uses = _to_domain(
+        repo.list_reservations(session), repo.list_reservation_uses(session)
+    )
+    return {day: domain.outstanding(reservations, uses, day) for day in days}
+
+
+def reserve_flows_in_period(session: Session, after: date, up_to: date) -> domain.ReserveFlows:
+    """Separações, compras e liberações datadas em (after, up_to], em todas as contas."""
+    reservations, uses = _to_domain(
+        repo.list_reservations(session), repo.list_reservation_uses(session)
+    )
+    return domain.reserve_flows(reservations, uses, after, up_to)
+
+
+def reserved_in_class(session: Session, class_id: int) -> int:
+    """Separado em aberto para a categoria em todas as contas (arquivar a categoria o deixaria
+    sem destino)."""
+    return reserved_by_class(session).get(class_id, 0)
+
+
+def separated_by_month(session: Session) -> dict[str, dict[int, int]]:
+    """O que foi separado em cada mês ("YYYY-MM"), por categoria, em todas as contas."""
+    reservations, _ = _to_domain(repo.list_reservations(session), [])
+    return domain.separated_by_month(reservations)

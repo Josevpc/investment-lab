@@ -16,6 +16,7 @@ const classes = [
   { id: 1, key: "renda_fixa", name: "Renda fixa", color: "#000", archived: false },
   { id: 2, key: "fii", name: "FII", color: "#000", archived: false },
   { id: 3, key: "acoes", name: "Ações/ETF", color: "#000", archived: false },
+  { id: 4, key: "cripto", name: "Cripto", color: "#000", archived: false },
 ];
 
 const performance = (scope: string, label: string): Performance => ({
@@ -24,8 +25,8 @@ const performance = (scope: string, label: string): Performance => ({
   include_reserve: false,
   observations_count: 2,
   points: [
-    { date: "2026-08-31", value_cents: 1_000_000, flows_cents: 0, portfolio_bps: 0, cdi_bps: 0, ibovespa_bps: 0 },
-    { date: "2026-09-30", value_cents: 1_100_000, flows_cents: 0, portfolio_bps: 1000, cdi_bps: 90, ibovespa_bps: 320 },
+    { date: "2026-08-31", value_cents: 1_000_000, flows_cents: 0, portfolio_bps: 0, cdi_bps: 0, ibovespa_bps: 0, ipca_bps: 0, usd_bps: null },
+    { date: "2026-09-30", value_cents: 1_100_000, flows_cents: 0, portfolio_bps: 1000, cdi_bps: 90, ibovespa_bps: 320, ipca_bps: 40, usd_bps: null },
   ],
   summary: {
     start_date: "2026-08-31",
@@ -35,6 +36,11 @@ const performance = (scope: string, label: string): Performance => ({
     vs_cdi_bps: 910,
     ibovespa_bps: 320,
     vs_ibovespa_bps: 680,
+    ipca_bps: 40,
+    vs_ipca_bps: 960,
+    ipca_date: "2026-09",
+    usd_bps: null,
+    vs_usd_bps: null,
     flows_cents: 0,
   },
   method: "Retorno ponderado pelo tempo.",
@@ -45,6 +51,10 @@ const performance = (scope: string, label: string): Performance => ({
   cdi_covered_through: "2026-09-30",
   ibovespa_covered_through: "2026-09-30",
   ibovespa_source: "B3 (Ibovespa)",
+  ipca_covered_through: "2026-09",
+  ipca_source: "IBGE (IPCA)",
+  usd_covered_through: null,
+  usd_source: null,
 });
 
 function renderTab(groups: unknown) {
@@ -100,6 +110,17 @@ describe("Desempenho: escopo por grupo", () => {
     await screen.findByRole("option", { name: "Grupo Seguros" });
     await user.selectOptions(scope, "group:4");
     expect(screen.getByRole("checkbox", { name: "Ibovespa" })).not.toBeChecked();
+  });
+
+  it("um grupo com cripto e renda fixa abre sem o Ibovespa e sem o seletor de dólar", async () => {
+    const user = userEvent.setup();
+    renderTab([{ id: 5, name: "Alternativos", color: "#000", archived: false, class_ids: [1, 4] }]);
+
+    const scope = await screen.findByRole("combobox", { name: /Escopo/ });
+    await screen.findByRole("option", { name: "Grupo Alternativos" });
+    await user.selectOptions(scope, "group:5");
+    expect(screen.getByRole("checkbox", { name: "Ibovespa" })).not.toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Dólar" })).not.toBeInTheDocument();
   });
 
   it("sem grupos, o seletor é o de sempre (categorias soltas, sem agrupamentos)", async () => {

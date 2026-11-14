@@ -4,6 +4,7 @@ import type { MoneyTextPart } from "@/shared/lib/moneyText";
 import { Field, inputClass, Money } from "@/shared/ui";
 import { useCashTransfer } from "../hooks";
 import { transferProblem } from "../lib/entries";
+import { freeCents, reservedCents } from "../lib/split";
 import type { Account } from "../types";
 import { BalancePreview, CashError, FormPanel, SubmitRow } from "./parts";
 
@@ -109,14 +110,19 @@ export function TransferForm({
           <input type="date" max={today} className={`${inputClass} min-h-10`} value={date} onChange={(e) => setDate(e.target.value)} />
         </Field>
       </div>
-      {origin && origin.balance_cents > 0 && (
+      {origin && freeCents(origin) > 0 && (
         <button
           type="button"
           className="min-h-10 text-sm font-medium text-blue-700 hover:underline dark:text-blue-300"
-          onClick={() => setAmount(centsToInput(origin.balance_cents))}
+          onClick={() => setAmount(centsToInput(freeCents(origin)))}
         >
-          Usar todo o caixa de {origin.name} (<Money cents={origin.balance_cents} />)
+          Usar todo o caixa {reservedCents(origin) > 0 ? "livre " : ""}de {origin.name} (<Money cents={freeCents(origin)} />)
         </button>
+      )}
+      {origin && reservedCents(origin) > 0 && (
+        <p className="text-xs text-slate-600 dark:text-slate-400">
+          <Money cents={reservedCents(origin)} /> de {origin.name} estão separados para comprar (ainda não investidos) e não saem por aqui.
+        </p>
       )}
       {valid && (origin || target) && (
         <div className="space-y-1">

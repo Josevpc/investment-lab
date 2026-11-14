@@ -61,6 +61,10 @@ class PerformancePoint(BaseModel):
     cdi_bps: int | None
     # Variação do Ibovespa (só pontos, sem dividendos) desde o ponto-base; None se faltar dado.
     ibovespa_bps: int | None = None
+    # Inflação (IPCA) acumulada desde o ponto-base, pro rata dos dias; None se o mês não saiu.
+    ipca_bps: int | None = None
+    # Variação do dólar (PTAX de venda) desde o ponto-base. Só no escopo "cripto"; senão None.
+    usd_bps: int | None = None
 
 
 class PerformanceSummary(BaseModel):
@@ -72,6 +76,15 @@ class PerformanceSummary(BaseModel):
     ibovespa_bps: int | None = None
     vs_ibovespa_bps: int | None = None  # carteira menos Ibovespa, em pontos-base de p.p.
     flows_cents: int = 0  # fluxo externo líquido de todo o período
+    # IPCA no último ponto que o IPCA cobre (`ipca_date`), e a carteira menos o IPCA nesse mesmo
+    # ponto. O IPCA do mês corrente só sai depois do fim do mês, então `ipca_date` costuma ser
+    # anterior a `end_date`.
+    ipca_bps: int | None = None
+    vs_ipca_bps: int | None = None
+    ipca_date: dt.date | None = None
+    # Dólar no último ponto, só no escopo "cripto": variação e carteira menos dólar.
+    usd_bps: int | None = None
+    vs_usd_bps: int | None = None
 
 
 class StaleAsset(BaseModel):
@@ -100,6 +113,12 @@ class PerformanceOut(BaseModel):
     # Último fechamento do Ibovespa guardado (AAAA-MM-DD); None se não há nenhum.
     ibovespa_covered_through: str | None = None
     ibovespa_source: str | None = None  # cita a B3; None enquanto não há dado do Ibovespa
+    # Último mês de IPCA divulgado e guardado (AAAA-MM); None se não há nenhum.
+    ipca_covered_through: str | None = None
+    ipca_source: str | None = None  # None enquanto não há IPCA
+    # Dólar, só no escopo "cripto": última cotação guardada (AAAA-MM-DD) e a fonte.
+    usd_covered_through: str | None = None
+    usd_source: str | None = None
 
 
 class AssetFlowOut(BaseModel):
@@ -133,6 +152,8 @@ class AssetPerformanceOut(BaseModel):
     contracted_pct_bps: int | None  # só para ativos "CDI": a taxa contratada, em % do CDI
     # Os saldos digitados já vêm sem o IR: o % do CDI não é comparável ao de um ativo bruto.
     balance_is_net: bool
+    # Renda fixa isenta de IR (LCI, LCA...): o saldo já é o que a pessoa recebe.
+    tax_exempt: bool
     dates: list[dt.date]  # datas com saldo observado (as opções de início e fim do período)
     start_date: dt.date | None
     end_date: dt.date | None
@@ -146,6 +167,14 @@ class AssetPerformanceOut(BaseModel):
     return_bps: int | None  # quanto R$ 1 aplicado no início rendeu no período
     cdi_bps: int | None  # CDI acumulado no mesmo período
     pct_of_cdi_bps: int | None  # 12000 = 120% do CDI
+    # Alíquota de IR usada nos dois campos abaixo (a escolhida na tela); None fora da renda fixa.
+    ir_rate_bps: int | None
+    # CDI do período depois do IR com a alíquota acima; None sem CDI ou fora da renda fixa.
+    net_cdi_bps: int | None
+    # Equivalente bruto do % do CDI: de um isento ou de um saldo líquido, quanto um ativo bruto
+    # teria de render para dar o mesmo; igual a `pct_of_cdi_bps` para saldo bruto tributado.
+    net_pct_of_cdi_bps: int | None
+    ir_rates_source: str  # de onde vêm as alíquotas
     vs_contracted_bps: int | None  # realizado menos contratado, em pontos-base de % do CDI
     steps: list[AssetStepOut]
     warnings: list[str]
@@ -155,3 +184,7 @@ class AssetPerformanceOut(BaseModel):
     ibovespa_bps: int | None = None
     vs_ibovespa_bps: int | None = None  # return_bps menos ibovespa_bps
     ibovespa_covered_through: dt.date | None = None  # pregão usado no fim do período
+    # Dólar ponto a ponto entre start_date e end_date, só para cripto; None nas demais categorias.
+    usd_bps: int | None = None
+    vs_usd_bps: int | None = None  # return_bps menos usd_bps
+    usd_covered_through: dt.date | None = None  # cotação usada no fim do período

@@ -140,4 +140,27 @@ describe("Contas e caixa", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Falha ao ler as contas.");
     expect(screen.getByRole("button", { name: "Tentar de novo" })).toBeInTheDocument();
   });
+
+  it("conta com dinheiro separado mostra livre, separado e total, cada um com seu rótulo", async () => {
+    mockApi([{ ...xp, reserved_cents: 20_000, free_cents: 30_000 }]);
+    renderPage();
+
+    const row = within(await screen.findByRole("list", { name: "Contas" })).getByRole("listitem");
+    expect(row).toHaveTextContent("R$ 500,00");
+    expect(row).toHaveTextContent("total na conta");
+    expect(row).toHaveTextContent("Caixa livre R$ 300,00");
+    expect(row).toHaveTextContent("Separado para comprar R$ 200,00 · ainda não investido");
+    expect(screen.getByText("Caixa nas contas").parentElement).toHaveTextContent(/Inclui R\$\s200,00 separados para comprar/);
+  });
+
+  it("sem nada separado a linha fica como sempre, sem os valores extras", async () => {
+    mockApi([{ ...xp, reserved_cents: 0, free_cents: 50_000 }]);
+    renderPage();
+
+    const row = within(await screen.findByRole("list", { name: "Contas" })).getByRole("listitem");
+    expect(row).toHaveTextContent("em caixa");
+    expect(row).not.toHaveTextContent("Separado para comprar");
+    expect(row).not.toHaveTextContent("Caixa livre");
+    expect(screen.getByText("Caixa nas contas").parentElement).not.toHaveTextContent(/separados para comprar/);
+  });
 });

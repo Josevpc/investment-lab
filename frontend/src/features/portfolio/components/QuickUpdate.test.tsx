@@ -13,6 +13,7 @@ const asset = (extra: Partial<Asset>): Asset =>
     purpose: null,
     quantity: null,
     balance_is_net: false,
+    tax_exempt: false,
     ...extra,
   }) as Asset;
 
@@ -117,6 +118,24 @@ describe("Atualização rápida: a lista", () => {
     expect(within(mercadoPago).getByText(/atualizado há 7 dias/)).toBeInTheDocument();
     expect(within(mercadoPago).queryByText("Desatualizado")).not.toBeInTheDocument(); // uma semana ainda é em dia
     expect(within(screen.getByRole("region", { name: "XP" })).getByText(/atualizado há 7 dias/)).toBeInTheDocument();
+  });
+
+  it("rotula o ativo isento de IR e o de saldo já líquido", () => {
+    mockApi();
+    const lci = asset({
+      id: 5,
+      name: "LCI Banco Y",
+      institution_id: 50,
+      institution_name: "Banco Y",
+      invested_cents: 80_000,
+      current_cents: 80_000,
+      valuation_date: "2026-10-17",
+      tax_exempt: true,
+    });
+    renderPage([lci, caixinha]);
+    expect(screen.getByRole("listitem", { name: "LCI Banco Y" })).toHaveTextContent("isento de IR");
+    expect(screen.getByRole("listitem", { name: "Caixinha" })).toHaveTextContent("saldo líquido de IR");
+    expect(screen.getByRole("listitem", { name: "Caixinha" })).not.toHaveTextContent("isento de IR");
   });
 
   it("sem ativos, orienta a cadastrar o primeiro", () => {

@@ -4,6 +4,7 @@ Funções puras: o serviço monta os saldos e fluxos a partir da linha do tempo 
 do CDI a partir do banco.
 """
 
+from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
@@ -138,6 +139,69 @@ def index_returns(closes: list[int | None], base: int | None) -> list[Decimal | 
         return result
     for i in range(base, len(closes)):
         result[i] = index_return(closes[base], closes[i])
+    return result
+
+
+def _month_key(day: date) -> str:
+    return f"{day.year}-{day.month:02d}"
+
+
+def _months_ahead(year: int, month: int) -> tuple[int, int]:
+    return (year + 1, 1) if month == 12 else (year, month + 1)
+
+
+def ipca_returns(
+    dates: list[date], base: int | None, monthly_ppm: dict[str, int]
+) -> list[Decimal | None]:
+    """IPCA acumulado (fração) entre a data-base e cada data seguinte, no período (base, data].
+
+    `monthly_ppm` é a variação de cada mês divulgado (AAAA-MM), em ppm; pode ser negativa. Os meses
+    inteiros se compõem; dentro de um mês, só vale a parte proporcional dos dias corridos:
+    (1 + r) ** (dias / dias do mês). Assim, duas datas no mesmo mês pegam só a fatia dele, e a
+    soma das fatias de um mês é o mês inteiro. Mês ainda não divulgado não é estimado: todo ponto
+    que depende dele fica sem valor (e os seguintes também, pois dependem do mesmo mês).
+    """
+    result: list[Decimal | None] = [None] * len(dates)
+    if base is None:
+        return result
+    result[base] = Decimal(0)
+    origin = dates[base]
+    origin_month = (origin.year, origin.month)
+
+    def rate(year: int, month: int) -> Decimal | None:
+        ppm = monthly_ppm.get(f"{year}-{month:02d}")
+        return None if ppm is None else 1 + Decimal(ppm) / 1_000_000
+
+    def slice_of(year: int, month: int, days: int) -> Decimal | None:
+        """Fator de `days` dias de um mês; None se o mês não foi divulgado."""
+        if days == 0:
+            return ONE
+        monthly = rate(year, month)
+        if monthly is None:
+            return None
+        total = monthrange(year, month)[1]
+        return monthly if days == total else monthly ** (Decimal(days) / Decimal(total))
+
+    # `closed` acumula da data-base até o fim do mês `closed_month`; só avança para a frente.
+    closed: Decimal | None = slice_of(*origin_month, monthrange(*origin_month)[1] - origin.day)
+    closed_month = origin_month
+    for i in range(base + 1, len(dates)):
+        year, month = dates[i].year, dates[i].month
+        if closed is None:
+            break  # já faltou um mês: os pontos daqui em diante dependem dele
+        if (year, month) == origin_month:
+            factor = slice_of(year, month, dates[i].day - origin.day)
+        else:
+            while closed is not None and _months_ahead(*closed_month) != (year, month):
+                closed_month = _months_ahead(*closed_month)
+                whole = rate(*closed_month)
+                closed = None if whole is None else closed * whole
+            if closed is None:
+                break
+            tail = slice_of(year, month, dates[i].day)
+            factor = None if tail is None else closed * tail
+        if factor is not None:
+            result[i] = factor - 1
     return result
 
 

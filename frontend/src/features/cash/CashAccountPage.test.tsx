@@ -44,7 +44,7 @@ interface Call {
 
 type Reply = { status?: number; body: unknown };
 
-function mockApi({ account = xp, entries = [] as Entry[], overrides = {} as Record<string, Reply> } = {}) {
+function mockApi({ account = xp, entries = [] as Entry[], overrides = {} as Record<string, Reply>, reservations = undefined as unknown } = {}) {
   const calls: Call[] = [];
   vi.stubGlobal(
     "fetch",
@@ -59,8 +59,14 @@ function mockApi({ account = xp, entries = [] as Entry[], overrides = {} as Reco
       if (key === "GET /api/v1/accounts/1/entries") return json({ account_id: 1, balance_cents: account.balance_cents, entries });
       if (key === "GET /api/v1/cash/contributed-capital")
         return json({ as_of: today, start: null, deposits_cents: 20_000, withdrawals_cents: 0, contributed_cents: 20_000, by_account: [] });
+      if (key === "GET /api/v1/accounts/1/reservations")
+        return json(
+          reservations ?? { reserved_cents: 0, free_cents: account.balance_cents, by_class: [], reservations: [] },
+        );
+      if (key === "GET /api/v1/asset-classes") return json([{ id: 3, key: "fii", name: "FII", color: "#5e8a57", archived: false }]);
       if (key === "GET /api/v1/institutions") return json([{ id: 1, name: "XP" }]);
-      if (key === "GET /api/v1/assets") return json([{ id: 7, name: "HGLG11", account_id: 1, archived: false, valuation_date: `${month}-01` }]);
+      if (key === "GET /api/v1/assets")
+        return json([{ id: 7, name: "HGLG11", class_key: "fii", class_name: "FII", account_id: 1, archived: false, hold_only: false, purpose: null, valuation_date: `${month}-01` }]);
       if (key === "GET /api/v1/accounts/1/reconcile") {
         const real = Number(new URL(url, "http://x").searchParams.get("real_cents"));
         return json({ account_id: 1, as_of: today, calculated_cents: 50_000, real_cents: real, difference_cents: real - 50_000 });
@@ -365,5 +371,61 @@ describe("Conta: foco, limites e estados extras", () => {
     renderPage();
     const link = await screen.findByRole("link", { name: /^Ver movimento/ });
     expect(link).toHaveAccessibleDescription(/desfaça o movimento em Movimentações/);
+  });
+});
+
+describe("Conta: dinheiro separado para comprar", () => {
+  const separated = { ...xp, reserved_cents: 20_000, free_cents: 30_000 };
+  const overview = {
+    reserved_cents: 20_000,
+    free_cents: 30_000,
+    by_class: [{ class_id: 3, class_name: "FII", color: "#5e8a57", remaining_cents: 20_000 }],
+    reservations: [
+      { id: 11, account_id: 1, class_id: 3, class_name: "FII", date: `${month}-05`, amount_cents: 20_000, used_cents: 0, released_cents: 0, remaining_cents: 20_000, deletable: true },
+    ],
+  };
+
+  it("mostra caixa livre, separado (tracejado e “ainda não investido”) e total, com rótulo", async () => {
+    mockApi({ account: separated, reservations: overview });
+    renderPage();
+
+    expect(await screen.findByText("Caixa livre")).toBeInTheDocument();
+    const stat = screen.getByText("Separado para comprar", { selector: "p" });
+    expect(stat.parentElement?.parentElement).toHaveClass("border-dashed");
+    expect(stat.parentElement).toHaveTextContent("ainda não investido");
+    expect(screen.getByText("Total na conta")).toBeInTheDocument();
+    expect(screen.queryByText("Caixa hoje")).not.toBeInTheDocument();
+    // A ação principal continua a de sempre; separar é secundária.
+    expect(screen.getByRole("button", { name: "Registrar lançamento" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Separar para comprar" })).toBeInTheDocument();
+  });
+
+  it("sem nada separado o caixa aparece como sempre, sem os dois valores extras", async () => {
+    mockApi();
+    renderPage();
+
+    expect(await screen.findByText("Caixa hoje")).toBeInTheDocument();
+    expect(screen.queryByText("Caixa livre")).not.toBeInTheDocument();
+    expect(screen.queryByText("Total na conta")).not.toBeInTheDocument();
+    expect(await screen.findByText(/Nada separado\. Separe parte do caixa/)).toBeInTheDocument();
+  });
+
+  it("separa pelo formulário, avisa o que foi feito e devolve o foco ao botão", async () => {
+    const user = userEvent.setup();
+    const calls = mockApi();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "Separar para comprar" }));
+    const form = await screen.findByRole("form", { name: "Separar para comprar em XP" });
+    await waitFor(() => expect(within(form).getByRole("option", { name: "FII" })).toBeInTheDocument());
+    await user.selectOptions(within(form).getByLabelText("Categoria"), "3");
+    await user.type(within(form).getByLabelText("Valor a separar (R$)"), "200");
+    await user.click(within(form).getByRole("button", { name: "Separar para comprar" }));
+
+    await waitFor(() => expect(posts(calls)).toHaveLength(1));
+    expect(posts(calls)[0]).toMatchObject({ url: "/api/v1/accounts/1/reservations", body: { class_id: 3, amount_cents: 20_000, date: today } });
+    await expectStatus("R$ 200,00 separados para FII");
+    await expectStatus("Caixa livre: R$ 300,00");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Separar para comprar" })).toHaveFocus());
   });
 });

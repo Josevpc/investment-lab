@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CONTRIBUTIONS_BY_MONTH_KEY } from "@/features/history";
 import { cashApi } from "./api";
-import type { ManualKind } from "./types";
+import type { ManualKind, ReservationInput } from "./types";
 
 export function useAccounts(includeArchived = false) {
   return useQuery({ queryKey: ["cash", "accounts", includeArchived], queryFn: () => cashApi.accounts(includeArchived) });
@@ -27,6 +28,15 @@ export function useContributedCapital(accountId?: number, enabled = true) {
   });
 }
 
+/** O que está separado para comprar numa conta. `includeClosed` traz também as separações já usadas ou liberadas. */
+export function useReservations(accountId: number, enabled = true, includeClosed = false) {
+  return useQuery({
+    queryKey: ["cash", "reservations", accountId, includeClosed],
+    queryFn: () => cashApi.reservations(accountId, includeClosed),
+    enabled,
+  });
+}
+
 /** Comparação só de leitura entre o caixa calculado e o saldo do extrato. */
 export function useReconcile(id: number, realCents: number | null, asOf: string, enabled: boolean) {
   return useQuery({
@@ -39,12 +49,17 @@ export function useReconcile(id: number, realCents: number | null, asOf: string,
 
 /**
  * Lançamento no caixa muda o extrato, os saldos e o capital aportado, e também o "caixa nas contas" do
- * resumo da carteira. Os ativos não mudam (a compra, que muda, passa pela carteira).
+ * resumo da carteira. Os ativos não mudam (a compra, que muda, passa pela carteira). Separar ou liberar
+ * dinheiro também move o "aporte por mês" do Histórico, então ele é invalidado junto.
  */
 function useInvalidateCash() {
   const client = useQueryClient();
   return () =>
-    Promise.all([client.invalidateQueries({ queryKey: ["cash"] }), client.invalidateQueries({ queryKey: ["portfolio", "summary"] })]);
+    Promise.all([
+      client.invalidateQueries({ queryKey: ["cash"] }),
+      client.invalidateQueries({ queryKey: ["portfolio", "summary"] }),
+      client.invalidateQueries({ queryKey: CONTRIBUTIONS_BY_MONTH_KEY }),
+    ]);
 }
 
 export function useCreateAccount() {
@@ -97,6 +112,29 @@ export function useApplyReconciliation() {
       cashApi.applyReconciliation(id, realCents, asOf),
     onSuccess: invalidate,
   });
+}
+
+/** Separar, liberar e excluir mexem no caixa livre, na lista de separações e (com depósito) no capital aportado. */
+export function useCreateReservation() {
+  const invalidate = useInvalidateCash();
+  return useMutation({
+    mutationFn: ({ accountId, input }: { accountId: number; input: ReservationInput }) => cashApi.createReservation(accountId, input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useReleaseReservation() {
+  const invalidate = useInvalidateCash();
+  return useMutation({
+    mutationFn: ({ id, amountCents, date }: { id: number; amountCents?: number; date?: string }) =>
+      cashApi.releaseReservation(id, { ...(amountCents !== undefined && { amount_cents: amountCents }), ...(date && { date }) }),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeleteReservation() {
+  const invalidate = useInvalidateCash();
+  return useMutation({ mutationFn: (id: number) => cashApi.deleteReservation(id), onSuccess: invalidate });
 }
 
 export function useDeleteEntry() {

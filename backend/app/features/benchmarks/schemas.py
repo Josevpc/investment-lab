@@ -22,6 +22,9 @@ class BenchmarkStatus(BaseModel):
     # Ibovespa (B3): fechamentos diários guardados e último dia.
     index_days: int = 0
     index_through: str | None = None
+    # Dólar (PTAX de venda do Banco Central): cotações diárias guardadas e último dia.
+    usd_days: int = 0
+    usd_through: str | None = None
 
 
 class RefreshResult(BaseModel):

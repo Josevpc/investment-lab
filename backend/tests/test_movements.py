@@ -672,6 +672,30 @@ def test_balance_with_quantity_added_sums_to_the_asset_quantity(client, institut
     assert body["current_cents"] == 207_500
 
 
+def test_quantity_added_also_sums_cotas_of_a_fii(client, institution):
+    fii = asset(
+        client,
+        "HGLG11",
+        institution["id"],
+        class_key="renda_variavel",
+        invested=150_000,
+        current=150_000,
+        asset_type="fii",
+        fii_segment="tijolo",
+        quantity="150",
+    )
+    body = balance(
+        client,
+        fii["id"],
+        date="2026-10-31",
+        balance_cents=166_000,
+        contribution_cents=16_000,
+        quantity_added="10",
+    ).json()
+    assert body["quantity"] == "160"
+    assert body["invested_cents"] == 166_000
+
+
 def test_quantity_added_starts_from_zero_when_the_asset_has_no_quantity(client, institution):
     eth = asset(client, "Ether", institution["id"], class_key="cripto", current=10_000)
     body = balance(

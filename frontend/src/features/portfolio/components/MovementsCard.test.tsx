@@ -29,6 +29,19 @@ const bitcoin = {
   current_cents: 87_500,
 };
 
+const fii = {
+  ...cofrinho,
+  id: 6,
+  name: "HGLG11",
+  ticker: "HGLG11",
+  class_key: "acoes",
+  asset_type: "fii",
+  purpose: null,
+  quantity: "10",
+  invested_cents: 150_000,
+  current_cents: 160_000,
+};
+
 const emptySummary = {
   month: "2026-10",
   by_class: [],
@@ -49,7 +62,7 @@ function mockApi(movements: unknown[] = [], accounts: unknown[] = [], summary: u
     calls.push({ url, init });
     const method = init?.method ?? "GET";
     if (method === "GET" && url.includes("/accounts")) return new Response(JSON.stringify(accounts), { status: 200 });
-    if (method === "GET" && url.includes("/assets")) return new Response(JSON.stringify([cofrinho, { ...cofrinho, id: 3, name: "Outro" }, bitcoin, { ...bitcoin, id: 5, name: "Ether", quantity: null }]), { status: 200 });
+    if (method === "GET" && url.includes("/assets")) return new Response(JSON.stringify([cofrinho, { ...cofrinho, id: 3, name: "Outro" }, bitcoin, { ...bitcoin, id: 5, name: "Ether", quantity: null }, fii, { ...fii, id: 7, name: "XPML11", quantity: null }]), { status: 200 });
     if (method === "GET" && url.includes("/movements")) return new Response(JSON.stringify(movements), { status: 200 });
     if (method === "GET" && url.includes("/portfolio/month-summary")) return new Response(JSON.stringify(summary), { status: 200 });
     return new Response(JSON.stringify({}), { status: 200 });
@@ -178,6 +191,85 @@ describe("Movimentações: registrar aporte", () => {
     await user.selectOptions(screen.getByLabelText("Ativo"), "5");
     expect(screen.getByLabelText("Valor do aporte (R$)")).toBeInTheDocument();
     expect(screen.getByText(/não tem a quantidade de moedas cadastrada/)).toBeInTheDocument();
+  });
+
+  it("FII com quantidade: informa as cotas, vê a prévia com o preço médio e envia quantity_added", async () => {
+    const user = userEvent.setup();
+    const calls = mockApi();
+    renderCard();
+    await openForm(user);
+
+    await user.selectOptions(screen.getByLabelText("Ativo"), "6");
+    const shares = screen.getByLabelText("Cotas compradas (opcional)");
+    expect(screen.getByText("Você tem 10 cotas em HGLG11.")).toBeInTheDocument();
+    expect(shares).toHaveAccessibleDescription("Você tem 10 cotas em HGLG11.");
+    await user.type(screen.getByLabelText("Valor do aporte (R$)"), "1.234,00");
+    await user.type(shares, "4");
+    expect(screen.getByRole("status")).toHaveTextContent("Depois do aporte você terá 14 cotas. Preço médio desta compra: R$ 308,50 por cota.");
+    await user.click(screen.getAllByRole("button", { name: "Registrar aporte" }).at(-1)!);
+
+    await waitFor(() => expect(calls.some((c) => c.init?.method === "POST")).toBe(true));
+    const post = calls.find((c) => c.init?.method === "POST")!;
+    expect(post.url).toBe("/api/v1/assets/6/balance");
+    expect(JSON.parse(String(post.init!.body))).toEqual({
+      date: todayISO(),
+      balance_cents: 160_000 + 123_400,
+      contribution_cents: 123_400,
+      quantity_added: "4",
+    });
+  });
+
+  it("FII com o campo de cotas vazio não envia quantity_added", async () => {
+    const user = userEvent.setup();
+    const calls = mockApi();
+    renderCard();
+    await openForm(user);
+
+    await user.selectOptions(screen.getByLabelText("Ativo"), "6");
+    await user.type(screen.getByLabelText("Valor do aporte (R$)"), "100");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: "Registrar aporte" }).at(-1)!);
+
+    await waitFor(() => expect(calls.some((c) => c.init?.method === "POST")).toBe(true));
+    const body = JSON.parse(String(calls.find((c) => c.init?.method === "POST")!.init!.body));
+    expect(body).toEqual({ date: todayISO(), balance_cents: 170_000, contribution_cents: 10_000 });
+    expect(body).not.toHaveProperty("quantity_added");
+  });
+
+  it("ativo sem quantidade cadastrada não mostra o campo de cotas e orienta a editar o ativo", async () => {
+    const user = userEvent.setup();
+    mockApi();
+    renderCard();
+    await openForm(user);
+
+    await user.selectOptions(screen.getByLabelText("Ativo"), "7");
+    expect(screen.queryByLabelText(/Cotas compradas/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Valor do aporte (R$)")).toBeInTheDocument();
+    expect(
+      screen.getByText("XPML11 não tem a quantidade de cotas cadastrada. Edite o ativo e preencha a quantidade para informar as cotas compradas no aporte."),
+    ).toBeInTheDocument();
+  });
+
+  it("cotas inválidas mostram o erro e bloqueiam o envio", async () => {
+    const user = userEvent.setup();
+    const calls = mockApi();
+    renderCard();
+    await openForm(user);
+
+    await user.selectOptions(screen.getByLabelText("Ativo"), "6");
+    await user.type(screen.getByLabelText("Valor do aporte (R$)"), "100");
+    const shares = screen.getByLabelText("Cotas compradas (opcional)");
+    await user.type(shares, "abc");
+    expect(screen.getByText("Quantidade inválida.")).toBeInTheDocument();
+    expect(shares).toBeInvalid();
+    expect(shares).toHaveAccessibleDescription(/Quantidade inválida\./);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    const submit = screen.getAllByRole("button", { name: "Registrar aporte" }).at(-1)!;
+    expect(submit).toBeDisabled();
+
+    await user.clear(shares);
+    expect(submit).toBeEnabled();
+    expect(calls.some((c) => c.init?.method === "POST")).toBe(false);
   });
 
   it("não deixa registrar sem ativo e sem valor", async () => {
@@ -327,6 +419,28 @@ describe("Movimentações: desfazer", () => {
     await user.click(within(dialog).getByRole("button", { name: "Desfazer movimento" }));
     await waitFor(() => expect(calls.some((c) => c.url === "/api/v1/movements/6/undo")).toBe(true));
     expect(calls.find((c) => c.url === "/api/v1/movements/6/undo")!.init?.method).toBe("POST");
+  });
+
+  it("avisa que a quantidade de cotas não volta sozinha quando o ativo tem quantidade", async () => {
+    const user = userEvent.setup();
+    mockApi([{ ...aporteMovement, asset_id: 6, asset_name: "HGLG11" }]);
+    renderCard();
+
+    await user.click(await screen.findByRole("button", { name: "Desfazer aporte de HGLG11" }));
+
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent(
+      "A quantidade de cotas de HGLG11 não volta sozinha; confira no cadastro do ativo.",
+    );
+  });
+
+  it("não fala de cotas quando o ativo não tem quantidade", async () => {
+    const user = userEvent.setup();
+    mockApi([aporteMovement]);
+    renderCard();
+
+    await user.click(await screen.findByRole("button", { name: "Desfazer aporte de Cofrinho Mercado Pago" }));
+
+    expect(await screen.findByRole("alertdialog")).not.toHaveTextContent("quantidade de cotas");
   });
 
   it("não faz nada quando a pessoa não confirma", async () => {
@@ -498,6 +612,25 @@ describe("Movimentações: investimento novo e total do mês", () => {
     renderCard();
     const line = await screen.findByText(/Total investido no mês/);
     expect(nb(line.textContent)).toBe("Aportes: R$ 90,00 · Ativos novos: R$ 713,91 · Total investido no mês: R$ 803,91 · Proventos: R$ 12,50");
+  });
+
+  it("sem separado no mês, a linha do total não ganha nada novo", async () => {
+    mockApi([], [], { ...emptySummary, registered_cents: 9_000, total_cents: 9_000, reserved_cents: 0 });
+    renderCard();
+    const line = await screen.findByText(/Total investido no mês/);
+    expect(nb(line.textContent)).not.toContain("Separado");
+    expect(nb(line.textContent)).toBe("Aportes: R$ 90,00 · Ativos novos: R$ 0,00 · Total investido no mês: R$ 90,00 · Proventos: R$ 0,00");
+  });
+
+  it("com separado no mês, mostra o separado com rótulo próprio e a soma visível fecha com o total", async () => {
+    // R$ 40 separados em outubro; a compra de R$ 100 só acontece no mês seguinte, usando esse separado.
+    mockApi([], [], { ...emptySummary, registered_cents: 9_000, new_assets_cents: 71_391, reserved_cents: 4_000, total_cents: 84_391 });
+    renderCard();
+    const line = await screen.findByText(/Total investido no mês/);
+    expect(nb(line.textContent)).toBe(
+      "Aportes: R$ 90,00 · Ativos novos: R$ 713,91 · Separado no mês: R$ 40,00 · Total investido no mês: R$ 843,91 · Proventos: R$ 0,00",
+    );
+    expect(9_000 + 71_391 + 4_000).toBe(84_391);
   });
 
   it("aporte do cadastro tem selo, não se edita e oferece “Não contar como aporte” em vez de desfazer", async () => {

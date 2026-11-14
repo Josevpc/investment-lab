@@ -430,6 +430,36 @@ def test_backup_without_the_net_balance_column_restores_every_asset_as_gross(cli
     assert [a["balance_is_net"] for a in client.get(f"{API}/assets").json()] == [False]
 
 
+def test_backup_carries_the_tax_exempt_mark_through_a_restore(client, make_asset):
+    make_asset(name="CDB")
+    make_asset(name="LCI", tax_exempt=True)
+    backup = export(client)
+    assert {a["name"]: a["tax_exempt"] for a in backup["tables"]["asset"]} == {
+        "CDB": False,
+        "LCI": True,
+    }
+
+    response = client.post(f"{API}/backup/restore", json={"backup": backup, "confirm": True})
+
+    assert response.status_code == 200, response.text
+    assert {a["name"]: a["tax_exempt"] for a in client.get(f"{API}/assets").json()} == {
+        "CDB": False,
+        "LCI": True,
+    }
+
+
+def test_backup_without_the_tax_exempt_column_restores_every_asset_as_taxed(client, make_asset):
+    make_asset(name="LCI", tax_exempt=True)
+    backup = copy.deepcopy(export(client))
+    for row in backup["tables"]["asset"]:
+        del row["tax_exempt"]  # arquivo sem a coluna
+
+    response = client.post(f"{API}/backup/restore", json={"backup": backup, "confirm": True})
+
+    assert response.status_code == 200, response.text
+    assert [a["tax_exempt"] for a in client.get(f"{API}/assets").json()] == [False]
+
+
 def test_backup_carries_the_initial_contribution_mark_through_a_restore(client, make_asset):
     from sqlalchemy import text
     from sqlalchemy.exc import IntegrityError
@@ -1361,3 +1391,76 @@ def test_backup_carries_the_off_goal_mark_through_a_restore(client, make_asset):
     again = export(client)
     again["exported_at"] = backup["exported_at"]
     assert again == backup
+
+
+# ---- isento de IR: a restauração segue a mesma regra do cadastro ---------------------------
+
+
+def test_restore_refuses_an_exempt_asset_with_a_net_balance(client, make_asset):
+    make_asset(name="CDB")
+    lci = make_asset(name="LCI", tax_exempt=True)
+    before = state(client)
+    backup = copy.deepcopy(export(client))
+    for row in backup["tables"]["asset"]:
+        if row["id"] == lci["id"]:
+            row["balance_is_net"] = True  # arquivo editado à mão: isento com saldo líquido
+
+    response = client.post(f"{API}/backup/restore", json={"backup": backup, "confirm": True})
+
+    assert response.status_code == 422
+    assert "LCI" in response.json()["detail"]
+    assert "Ativo isento não tem saldo líquido de IR" in response.json()["detail"]
+    assert state(client) == before  # nada foi gravado
+
+
+def test_restore_refuses_an_exempt_asset_outside_fixed_income(client, make_asset):
+    make_asset(name="CDB")
+    fii = make_asset(name="FII", class_key="renda_variavel", asset_type="fii", fii_segment="papel")
+    before = state(client)
+    backup = copy.deepcopy(export(client))
+    for row in backup["tables"]["asset"]:
+        if row["id"] == fii["id"]:
+            row["tax_exempt"] = True
+
+    response = client.post(f"{API}/backup/restore", json={"backup": backup, "confirm": True})
+
+    assert response.status_code == 422
+    assert "FII" in response.json()["detail"]
+    assert "Só ativos de renda fixa podem ser isentos de IR" in response.json()["detail"]
+    assert state(client) == before
+
+
+def test_restore_accepts_exempt_and_net_balance_assets_that_follow_the_rule(client, make_asset):
+    make_asset(name="LCI", tax_exempt=True)
+    make_asset(name="Caixinha", balance_is_net=True)
+    backup = export(client)
+
+    response = client.post(f"{API}/backup/restore", json={"backup": backup, "confirm": True})
+
+    assert response.status_code == 200, response.text
+
+
+def test_restore_converts_a_backup_from_revision_0018_without_the_exempt_mark(
+    client, make_asset, tmp_path
+):
+    make_asset(name="LCI", tax_exempt=True)  # será substituído
+    old = legacy_backup(tmp_path, "0018", fill_rev_0014)
+    # A configuração da cópia externa é deste computador e nunca entra no JSON do app.
+    old["tables"].pop("offsite_backup_setting")
+    assert old["tables"]["asset"]  # há ativos no arquivo...
+    assert all("tax_exempt" not in row for row in old["tables"]["asset"])  # ...sem a coluna
+    assert old["schema_revision"] == "0018"
+
+    inspected = client.post(f"{API}/backup/inspect", json=old).json()
+    assert inspected["valid"] is True and inspected["needs_conversion"] is True, inspected
+
+    response = client.post(f"{API}/backup/restore", json={"backup": old, "confirm": True})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["converted_from_revision"] == "0018"
+    assets = client.get(f"{API}/assets").json()
+    assert {a["name"] for a in assets} == {"CDB Antigo", "Tesouro Antigo"}
+    assert [a["tax_exempt"] for a in assets] == [False, False]
+    again = export(client)
+    assert again["schema_revision"] == head_revision()
+    assert [a["tax_exempt"] for a in again["tables"]["asset"]] == [False, False]

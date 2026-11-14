@@ -1,0 +1,229 @@
+- generic [ref=f6e3]:
+  - link "Pular para o conteúdo" [ref=f6e4] [cursor=pointer]:
+    - /url: "#conteudo"
+  - complementary [ref=f6e5]:
+    - generic [ref=f6e6]:
+      - link "Investment Lab, ir para a visão geral" [ref=f6e8] [cursor=pointer]:
+        - /url: /
+        - generic [ref=f6e15]: investment lab
+      - navigation "Principal" [ref=f6e16]:
+        - link "Visão geral" [ref=f6e18] [cursor=pointer]:
+          - /url: /
+        - link "Aporte do mês" [ref=f6e25] [cursor=pointer]:
+          - /url: /aporte
+        - generic [ref=f6e30]:
+          - link "Carteira" [expanded] [ref=f6e31] [cursor=pointer]:
+            - /url: /carteira
+          - list [ref=f6e36]:
+            - listitem [ref=f6e37]:
+              - link "Resumo" [ref=f6e38] [cursor=pointer]:
+                - /url: /carteira
+            - listitem [ref=f6e40]:
+              - link "Ativos" [ref=f6e41] [cursor=pointer]:
+                - /url: /carteira/ativos
+            - listitem [ref=f6e43]:
+              - link "Movimentações" [ref=f6e44] [cursor=pointer]:
+                - /url: /carteira/movimentacoes
+            - listitem [ref=f6e46]:
+              - link "Retiradas" [ref=f6e47] [cursor=pointer]:
+                - /url: /carteira/retiradas
+            - listitem [ref=f6e49]:
+              - link "Contas e caixa" [ref=f6e50] [cursor=pointer]:
+                - /url: /carteira/contas
+        - link "Histórico" [ref=f6e53] [cursor=pointer]:
+          - /url: /historico
+        - link "Trajetória" [ref=f6e57] [cursor=pointer]:
+          - /url: /trajetoria
+        - link "Metas" [ref=f6e62] [cursor=pointer]:
+          - /url: /metas
+      - generic [ref=f6e67]:
+        - link "Configurações" [ref=f6e68] [cursor=pointer]:
+          - /url: /configuracoes
+        - paragraph [ref=f6e72]: Seus dados ficam só neste dispositivo.
+  - generic [ref=f6e73]:
+    - banner [ref=f6e74]:
+      - paragraph [ref=f6e75]: Carteira · Movimentações
+      - status "Os valores desta tela são fictícios. Seus dados reais não estão sendo usados." [ref=f6e143]: Modo demonstração
+      - generic "Mês em foco" [ref=f6e76]: nov/2026
+      - button "Ocultar valores" [ref=f6e77]
+      - button "Usar tema claro" [ref=f6e81]
+    - main [ref=f6e85]:
+      - generic [ref=f6e86]:
+        - generic [ref=f6e87]:
+          - heading "Carteira" [level=1] [ref=f6e88]
+          - paragraph [ref=f6e89]: Todos os seus ativos, de todas as instituições, em um só lugar.
+        - group "Ações da carteira" [ref=f6e90]:
+          - link "Atualizar saldos" [ref=f6e91] [cursor=pointer]:
+            - /url: /carteira/atualizar
+          - button "Mais ações" [ref=f6e93]
+      - navigation "Seções da carteira" [ref=f6e96]:
+        - link "Resumo" [ref=f6e97] [cursor=pointer]:
+          - /url: /carteira
+        - link "Ativos" [ref=f6e98] [cursor=pointer]:
+          - /url: /carteira/ativos
+        - link "Movimentações" [ref=f6e99] [cursor=pointer]:
+          - /url: /carteira/movimentacoes
+        - link "Retiradas" [ref=f6e100] [cursor=pointer]:
+          - /url: /carteira/retiradas
+        - link "Contas e caixa" [ref=f6e101] [cursor=pointer]:
+          - /url: /carteira/contas
+      - generic [ref=f6e102]:
+        - heading "Movimentações" [level=2] [ref=f6e104]
+        - generic [ref=f6e105]:
+          - paragraph [ref=f6e106]:
+            - text: "Registre dinheiro novo colocado em um ativo. O valor soma ao investido e o saldo do ativo é atualizado: informe o saldo do extrato já com o aporte ou deixe em branco para o app somar o aporte ao saldo registrado. O"
+            - strong [ref=f6e107]: dia do aporte
+            - text: precisa ser depois do último saldo do ativo; é ele que permite medir quantos % do CDI o ativo rendeu.
+          - generic [ref=f6e108]:
+            - generic [ref=f6e109]:
+              - generic [ref=f6e110]: Ativo
+              - combobox "Ativo" [ref=f6e111]:
+                - option "Escolha um ativo"
+                - option "Ação Nova Exemplo · Corretora Exemplo" [selected]
+                - option "CDB Exemplo 110% do CDI · Banco Exemplo"
+                - option "CDB Novo Exemplo · Banco Exemplo"
+                - option "Conta Exemplo 120% do CDI · Fintech Exemplo"
+                - option "Cripto Exemplo · Banco Exemplo"
+                - option "ETF Exemplo · Corretora Exemplo"
+                - option "FII Papel Exemplo · Corretora Exemplo"
+                - option "FII Tijolo Exemplo · Corretora Exemplo"
+                - option "LCI Banco Exemplo 90% CDI · Banco Exemplo"
+                - option "Reserva Exemplo · Fintech Exemplo"
+            - generic [ref=f6e112]:
+              - generic [ref=f6e113]: Valor do aporte (R$)
+              - textbox "Valor do aporte (R$)" [ref=f6e114]:
+                - /placeholder: 0,00
+            - generic [ref=f6e115]:
+              - generic [ref=f6e116]: Dia do aporte
+              - textbox "Dia do aporte" [ref=f6e117]: 2026-11-13
+          - paragraph [ref=f6e145]: Ação Nova Exemplo não tem a quantidade de cotas cadastrada. Edite o ativo e preencha a quantidade para informar as cotas compradas no aporte.
+          - generic [ref=f6e119]:
+            - generic [ref=f6e120]: Saldo atual do ativo, com o aporte (R$) — opcional
+            - 'textbox "Saldo atual do ativo, com o aporte (R$) — opcional Último saldo registrado: R$ 200,60 em 13/11/2026." [ref=f6e146]':
+              - /placeholder: "Ex.: 803,91"
+            - generic [ref=f6e147]: "Último saldo registrado: R$ 200,60 em 13/11/2026."
+          - generic [ref=f6e122]:
+            - generic [ref=f6e123] [cursor=pointer]:
+              - checkbox "Fora da meta do mês" [ref=f6e124]
+              - text: Fora da meta do mês
+            - paragraph [ref=f6e125]: Conta no investido, no patrimônio e na rentabilidade, mas não no plano do mês, na sequência nem no ritmo de aporte.
+          - generic [ref=f6e126]:
+            - button "Registrar aporte" [disabled] [ref=f6e127]
+            - button "Cancelar" [ref=f6e128]
+        - generic [ref=f6e129]:
+          - generic [ref=f6e130]:
+            - generic [ref=f6e131]: Mês
+            - group "Mês das movimentações" [ref=f6e132]:
+              - button "Mês anterior" [ref=f6e133]: ‹
+              - button "Novembro de 2026" [ref=f6e134]: Novembro de 2026 ▾
+              - button "Próximo mês" [ref=f6e135]: ›
+          - paragraph [ref=f6e136]:
+            - text: "Aportes:"
+            - strong [ref=f6e148]: R$ 1.394,00
+            - text: "· Ativos novos:"
+            - strong [ref=f6e149]: R$ 350,00
+            - text: "· Separado no mês:"
+            - strong [ref=f6e150]: R$ 40,00
+            - text: "· Total investido no mês:"
+            - strong [ref=f6e151]: R$ 1.784,00
+            - text: "· Proventos:"
+            - strong [ref=f6e152]: R$ 225,00
+            - text: "· Resgates:"
+            - strong [ref=f6e153]: R$ 500,00
+            - text: ·
+            - link "Ver todas as retiradas" [ref=f6e154] [cursor=pointer]:
+              - /url: /carteira/retiradas
+        - table [ref=f6e156]:
+          - rowgroup [ref=f6e157]:
+            - row [ref=f6e158]:
+              - columnheader "Data" [ref=f6e159]
+              - columnheader "Tipo" [ref=f6e160]
+              - columnheader "Ativo" [ref=f6e161]
+              - columnheader "Valor" [ref=f6e162]
+              - columnheader [ref=f6e163]
+          - rowgroup [ref=f6e164]:
+            - row [ref=f6e165]:
+              - cell "13/11/2026" [ref=f6e166]
+              - cell "Aporte" [ref=f6e167]
+              - cell "FII Tijolo Exemplo" [ref=f6e170]
+              - cell "R$ 1.234,00" [ref=f6e171]
+              - cell [ref=f6e172]:
+                - 'button "Tirar da meta : aporte de R$ 1.234,00 em FII Tijolo Exemplo" [ref=f6e173]':
+                  - text: Tirar da meta
+                  - generic [ref=f6e174]: ": aporte de R$ 1.234,00 em FII Tijolo Exemplo"
+                - button "Editar aporte de FII Tijolo Exemplo" [ref=f6e175]: Editar
+                - button "Desfazer aporte de FII Tijolo Exemplo" [ref=f6e176]: Desfazer
+            - row [ref=f6e177]:
+              - cell "13/11/2026" [ref=f6e178]
+              - cell "Aporte" [ref=f6e179]
+              - cell "Cripto Exemplo" [ref=f6e182]
+              - cell "R$ 120,00" [ref=f6e183]
+              - cell [ref=f6e184]:
+                - 'button "Tirar da meta : aporte de R$ 120,00 em Cripto Exemplo" [ref=f6e185]':
+                  - text: Tirar da meta
+                  - generic [ref=f6e186]: ": aporte de R$ 120,00 em Cripto Exemplo"
+                - button "Editar aporte de Cripto Exemplo" [ref=f6e187]: Editar
+                - button "Desfazer aporte de Cripto Exemplo" [ref=f6e188]: Desfazer
+            - row [ref=f6e189]:
+              - cell "05/11/2026" [ref=f6e190]
+              - cell "Resgate" [ref=f6e191]
+              - 'cell "Reserva Exemplo Motivo: Conserto do carro (exemplo)" [ref=f6e194]':
+                - text: Reserva Exemplo
+                - generic [ref=f6e195]: "Motivo: Conserto do carro (exemplo)"
+              - cell "− R$ 500,00" [ref=f6e196]
+              - cell [ref=f6e197]:
+                - button "Editar resgate de Reserva Exemplo" [ref=f6e198]: Editar
+                - button "Desfazer resgate de Reserva Exemplo" [ref=f6e199]: Desfazer
+            - row [ref=f6e200]:
+              - cell "05/11/2026" [ref=f6e201]
+              - cell "Provento" [ref=f6e202]
+              - cell "FII Papel Exemplo" [ref=f6e205]
+              - cell "R$ 120,00" [ref=f6e206]
+              - cell [ref=f6e207]:
+                - button "Editar provento de FII Papel Exemplo" [ref=f6e208]: Editar
+                - button "Excluir provento de FII Papel Exemplo" [ref=f6e209]: Excluir
+            - row [ref=f6e210]:
+              - cell "05/11/2026" [ref=f6e211]
+              - cell "Provento" [ref=f6e212]
+              - cell "FII Tijolo Exemplo" [ref=f6e215]
+              - cell "R$ 105,00" [ref=f6e216]
+              - cell [ref=f6e217]:
+                - button "Editar provento de FII Tijolo Exemplo" [ref=f6e218]: Editar
+                - button "Excluir provento de FII Tijolo Exemplo" [ref=f6e219]: Excluir
+            - row [ref=f6e220]:
+              - cell "03/11/2026" [ref=f6e221]
+              - cell "Aporte Ativo novo" [ref=f6e222]:
+                - generic [ref=f6e223]:
+                  - generic [ref=f6e224]: Aporte
+                  - generic [ref=f6e225]: Ativo novo
+              - cell "Ação Nova Exemplo" [ref=f6e226]
+              - cell "R$ 200,00" [ref=f6e227]
+              - cell [ref=f6e228]:
+                - 'button "Tirar da meta : aporte de R$ 200,00 em Ação Nova Exemplo" [ref=f6e229]':
+                  - text: Tirar da meta
+                  - generic [ref=f6e230]: ": aporte de R$ 200,00 em Ação Nova Exemplo"
+                - 'button "Não contar como aporte: Ação Nova Exemplo" [ref=f6e231]': Não contar como aporte
+            - row [ref=f6e232]:
+              - cell "03/11/2026" [ref=f6e233]
+              - cell "Aporte Ativo novo" [ref=f6e234]:
+                - generic [ref=f6e235]:
+                  - generic [ref=f6e236]: Aporte
+                  - generic [ref=f6e237]: Ativo novo
+              - cell "CDB Novo Exemplo" [ref=f6e238]
+              - cell "R$ 150,00" [ref=f6e239]
+              - cell [ref=f6e240]:
+                - 'button "Tirar da meta : aporte de R$ 150,00 em CDB Novo Exemplo" [ref=f6e241]':
+                  - text: Tirar da meta
+                  - generic [ref=f6e242]: ": aporte de R$ 150,00 em CDB Novo Exemplo"
+                - 'button "Não contar como aporte: CDB Novo Exemplo" [ref=f6e243]': Não contar como aporte
+            - row [ref=f6e244]:
+              - cell "01/11/2026" [ref=f6e245]
+              - cell "Aporte" [ref=f6e246]
+              - cell "ETF Exemplo" [ref=f6e249]
+              - cell "R$ 100,00" [ref=f6e250]
+              - cell [ref=f6e251]:
+                - 'button "Tirar da meta : aporte de R$ 100,00 em ETF Exemplo" [ref=f6e252]':
+                  - text: Tirar da meta
+                  - generic [ref=f6e253]: ": aporte de R$ 100,00 em ETF Exemplo"
+                - button "Editar aporte de ETF Exemplo" [ref=f6e254]: Editar
+                - button "Desfazer aporte de ETF Exemplo" [ref=f6e255]: Desfazer

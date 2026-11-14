@@ -43,6 +43,8 @@ export interface Asset {
   hold_only: boolean;
   /** O saldo digitado já vem com o IR descontado (ex.: Caixinha do Mercado Pago); falso = bruto. */
   balance_is_net: boolean;
+  /** Renda fixa isenta de IR (LCI, LCA, CRI, CRA, debênture incentivada): o saldo bruto já é o que a pessoa recebe. */
+  tax_exempt: boolean;
   purpose: Purpose | null;
   asset_type: AssetType | null;
   fii_segment: FiiSegment | null;
@@ -83,6 +85,8 @@ export interface AssetFields {
   hold_only: boolean;
   /** Só rotula o desempenho contra o CDI: o app não calcula imposto. Vale só para renda fixa. */
   balance_is_net: boolean;
+  /** Só renda fixa. O back-end recusa (422) isento com saldo líquido: no máximo uma das duas marcas. */
+  tax_exempt: boolean;
 }
 
 export interface AssetCreateInput extends AssetFields {
@@ -113,7 +117,7 @@ export interface BalanceInput {
   /** Só para contas com caixa ativado: o aporte sai do caixa que já está na conta (só a compra), em vez de
    * entrar como dinheiro novo (depósito + compra). */
   use_cash?: boolean;
-  /** Moedas compradas no aporte (cripto): o back-end soma à quantidade do ativo. */
+  /** Cotas ou moedas compradas: o back-end soma à quantidade do ativo. */
   quantity_added?: string;
   /** Aporte fora da meta do mês: conta no investido, mas não no plano, no "extra" nem na sequência. Ignorado sem aporte. */
   off_goal?: boolean;
@@ -196,14 +200,26 @@ export interface PurchaseResult {
 export interface MonthSummary {
   month: string;
   /** `amount_cents` inclui tudo o que foi aportado; `goal_cents` é a parte que conta na meta do mês. */
-  by_class: { class_key: string; class_name: string; color: string; amount_cents: number; goal_cents: number }[];
+  by_class: {
+    class_key: string;
+    class_name: string;
+    color: string;
+    amount_cents: number;
+    goal_cents: number;
+    /** Separado para a categoria com data neste mês (ainda não investido); já está dentro de `amount_cents` e `goal_cents`. */
+    reserved_cents?: number;
+    /** Parte das compras do mês paga com separado de meses anteriores. Só informa: já está fora de `amount_cents` e `goal_cents`. */
+    from_reserved_cents?: number;
+  }[];
   reserve_cents: number;
   /** Parte da reserva aportada que conta na meta do mês. */
   reserve_goal_cents: number;
   /** Aportes marcados como fora da meta (reserva e categorias juntas). total = reserva na meta + categorias na meta + fora da meta. */
   off_goal_cents: number;
-  /** registered_cents + new_assets_cents. */
+  /** registered_cents + new_assets_cents + reserved_cents. */
   total_cents: number;
+  /** Soma do dinheiro separado no mês (ainda não investido). Ausente numa API anterior ao separado: vale 0. */
+  reserved_cents?: number;
   proventos_cents: number;
   /** Dinheiro resgatado no mês. */
   redemptions_cents: number;
@@ -222,6 +238,11 @@ export interface ClassBreakdown {
   current_cents: number;
   invested_cents: number;
   share_bps: number;
+}
+
+export interface ReservedByClass {
+  class_key: string;
+  reserved_cents: number;
 }
 
 export interface InstitutionBreakdown {
@@ -255,6 +276,16 @@ export interface PortfolioSummary {
   /** Dinheiro parado nas contas (caixa), fora dos totais acima. */
   cash_cents: number;
   total_with_cash_cents: number;
+  /**
+   * Dinheiro separado para comprar uma categoria, ainda não investido. Fica fora de `total_current_cents`, mas entra
+   * em `net_worth_cents`. Os campos do separado são ausentes numa API anterior a ele: a tela trata como 0.
+   */
+  reserved_cents?: number;
+  /** Caixa sem destino: `cash_cents - reserved_cents`. Ausente: vale `cash_cents`. */
+  free_cash_cents?: number;
+  /** Patrimônio total: `total_current_cents + reserved_cents`. */
+  net_worth_cents?: number;
+  reserved_by_class?: ReservedByClass[];
   by_class: ClassBreakdown[];
   /** Ausente numa API anterior aos grupos; só traz grupos com categorias. */
   by_group?: GroupBreakdown[];

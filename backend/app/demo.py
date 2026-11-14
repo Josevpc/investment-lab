@@ -3,7 +3,7 @@
 Só roda num banco separado (`data/demo/`) e com `INVESTMENT_DEMO=1`; a tela mostra o selo
 "Modo demonstração". Tudo aqui é fictício: instituições, ativos, valores, aportes e até o CDI, que
 é sintético (taxa fixa por dia útil) para o app funcionar sem internet. O mesmo vale para os
-fechamentos do "Ibovespa" usados na comparação.
+fechamentos do "Ibovespa", o "IPCA" e o "dólar" usados na comparação.
 """
 
 import datetime as dt
@@ -16,13 +16,20 @@ from sqlalchemy.orm import Session
 from app.core.config import REAL_DATABASE_PATH
 from app.features.analytics.cdi_equivalent import Flow, simulate
 from app.features.benchmarks.models import BenchmarkDaily, BenchmarkIndexLevel, BenchmarkRate
+from app.features.cash import service as cash
+from app.features.cash.schemas import OpeningBalanceIn, ReleaseIn, ReservationIn
 from app.features.contributions.schemas import ContributionUpsert
 from app.features.contributions.service import upsert_contribution
 from app.features.goals.schemas import GoalSettingsIn
 from app.features.goals.service import save_settings as save_goals
 from app.features.history.schemas import SnapshotCreate, SnapshotItemIn
 from app.features.history.service import create_snapshot
-from app.features.portfolio.movements import create_provento, create_redemption, record_balance
+from app.features.portfolio.movements import (
+    create_provento,
+    create_purchase,
+    create_redemption,
+    record_balance,
+)
 from app.features.portfolio.schemas import (
     AssetClassUpdate,
     AssetCreate,
@@ -30,6 +37,7 @@ from app.features.portfolio.schemas import (
     BalanceIn,
     InstitutionIn,
     ProventoIn,
+    PurchaseIn,
     RedemptionIn,
 )
 from app.features.portfolio.service import (
@@ -70,12 +78,29 @@ DEMO_GROUP_CLASS_KEYS = ("renda_variavel", "acoes_etfs")
 # Resgate fictício da reserva no mês corrente (valor e motivo de exemplo).
 REDEMPTION_CENTS = 50_000
 REDEMPTION_NOTE = "Conserto do carro (exemplo)"
+# Caixa da Corretora Exemplo e dinheiro separado para a categoria Ações/ETF (valores fictícios):
+# R$ 60 separados no mês passado e R$ 40 neste; uma compra de R$ 100 do ETF paga com os R$ 60 do
+# separado e R$ 40 do caixa livre; depois, R$ 10 dos R$ 40 voltam ao caixa livre.
+CASH_ACCOUNT_INSTITUTION = "Corretora Exemplo"
+CASH_OPENING_CENTS = 50_000
+SEPARATED_LAST_MONTH_CENTS = 6_000
+SEPARATED_THIS_MONTH_CENTS = 4_000
+SEPARATED_PURCHASE_CENTS = 10_000
+SEPARATED_RELEASE_CENTS = 1_000
+SEPARATED_CLASS_KEY = "acoes_etfs"
+SEPARATED_ASSET_NAME = "ETF Exemplo"
 DAILY_CDI = Decimal("0.00043")  # ~0,043% ao dia útil
 DAILY_SELIC = Decimal("0.000425")
 # Ibovespa fictício: sobe e desce em ciclos de oito pregões (variações em pontos-base), com saldo
 # levemente positivo, para a comparação da demonstração ter altas e baixas.
 IBOVESPA_START_POINTS = 128_000
 IBOVESPA_DAILY_MOVES_BPS = [35, -20, 50, -45, 10, 25, -30, 15]
+# IPCA fictício por mês, em ppm (0,31% a 0,52%), em ciclo. O mês corrente fica de fora, como na
+# vida real (o IBGE só divulga depois do fim do mês): a demonstração mostra o "dado parcial".
+IPCA_MONTHLY_PPM = [4_200, 3_100, 5_200, 4_600, 3_800, 4_400]
+# Dólar fictício: começa em R$ 5,0000 (em décimos de milésimo) e oscila em ciclos de oito pregões.
+USD_START_E4 = 50_000
+USD_DAILY_MOVES_BPS = [20, -10, 15, -25, 5, 10, -15, 5]
 
 
 def _month_end(year: int, month: int) -> dt.date:
@@ -117,6 +142,8 @@ def _seed_benchmarks(
             ppm = _round(accumulated * 1_000_000)
             session.add(BenchmarkRate(series=series, month=month, rate_ppm=ppm, fetched_at=now))
     _seed_ibovespa(session, days, now)
+    _seed_ipca(session, list(months), end.strftime("%Y-%m"), now)
+    _seed_usd(session, days, now)
     session.commit()
     return [(day, DAILY_CDI) for day in days]
 
@@ -132,6 +159,24 @@ def _seed_ibovespa(session: Session, days: list[dt.date], now: dt.datetime) -> N
             BenchmarkIndexLevel(
                 series="ibovespa", date=day, close_e2=_round(close * 100), fetched_at=now
             )
+        )
+
+
+def _seed_ipca(session: Session, months: list[str], current_month: str, now: dt.datetime) -> None:
+    """IPCA fictício dos meses encerrados; o corrente fica sem linha (ainda não divulgado)."""
+    for i, month in enumerate(months):
+        if month != current_month:
+            ppm = IPCA_MONTHLY_PPM[i % len(IPCA_MONTHLY_PPM)]
+            session.add(BenchmarkRate(series="ipca", month=month, rate_ppm=ppm, fetched_at=now))
+
+
+def _seed_usd(session: Session, days: list[dt.date], now: dt.datetime) -> None:
+    """Cotações fictícias do dólar (PTAX): um passeio determinístico, sem relação com a real."""
+    quote = Decimal(USD_START_E4)
+    for i, day in enumerate(days):
+        quote = quote * (1 + Decimal(USD_DAILY_MOVES_BPS[i % len(USD_DAILY_MOVES_BPS)]) / 10_000)
+        session.add(
+            BenchmarkIndexLevel(series="usd", date=day, close_e2=_round(quote), fetched_at=now)
         )
 
 
@@ -203,6 +248,16 @@ def seed_demo(session: Session, today: dt.date | None = None) -> bool:
             8_000,
             # Saldo já sem o IR (como a Caixinha do Mercado Pago): a tabela avisa que não compara.
             {"indexer": "CDI", "rate_bps": 12_000, "balance_is_net": True},
+        ),
+        (
+            "LCI Banco Exemplo 90% CDI",
+            "renda_fixa",
+            "Banco Exemplo",
+            1_000_000,
+            "0.90",
+            0,  # sem aporte: não mexe no aporte planejado nem nas somas do mês
+            # Isenta de IR: o saldo já é o que se recebe, e a tela mostra o equivalente bruto.
+            {"indexer": "CDI", "rate_bps": 9_000, "tax_exempt": True},
         ),
         (
             "Reserva Exemplo",
@@ -375,6 +430,7 @@ def seed_demo(session: Session, today: dt.date | None = None) -> bool:
             salary_cents=SALARY_CENTS, percent_bps=750, reserve_cents=9_750, mode="rebalance"
         ),
     )
+    _seed_separated_cash(session, banks[CASH_ACCOUNT_INSTITUTION], created, ends[-1], today)
     cripto_id, cripto_balance = created["Cripto Exemplo"], state["Cripto Exemplo"][1]
     if today > ends[-1]:
         for name, amount in FII_PROVENTOS.items():
@@ -422,6 +478,66 @@ def seed_demo(session: Session, today: dt.date | None = None) -> bool:
             session, today, rates, {row[0]: Decimal(row[4]) for row in cdi_assets}
         )
     return True
+
+
+def _seed_separated_cash(
+    session: Session,
+    institution_id: int,
+    asset_ids: dict[str, int],
+    last_month_end: dt.date,
+    today: dt.date,
+) -> None:
+    """Ativa o caixa da corretora e conta a história do dinheiro separado para comprar.
+
+    Tudo passa pelo serviço do caixa e da carteira (as mesmas travas do uso real). A ordem das datas
+    importa: a compra vem antes da segunda separação para pagar-se só com a primeira (o separado
+    mais antigo é gasto primeiro), e a segunda fica em aberto, menos a liberação parcial. Roda antes
+    dos proventos e do saldo de hoje: o caixa já existe quando eles caem, e a compra precisa ser
+    anterior à última atualização do ETF. Se hoje é dia 1, a segunda separação cai no mesmo dia da
+    compra, mas é gravada depois dela e por isso não é gasta.
+    """
+    first_of_month = today.replace(day=1)
+    account_id = next(
+        a.id for a in cash.list_accounts(session) if a.institution_id == institution_id
+    )
+    class_id = next(c.id for c in list_asset_classes(session) if c.key == SEPARATED_CLASS_KEY)
+
+    cash.set_opening_balance(
+        session,
+        account_id,
+        OpeningBalanceIn(
+            date=last_month_end - dt.timedelta(days=10), amount_cents=CASH_OPENING_CENTS
+        ),
+    )
+    cash.create_reservation(
+        session,
+        account_id,
+        ReservationIn(
+            class_id=class_id,
+            amount_cents=SEPARATED_LAST_MONTH_CENTS,
+            date=last_month_end - dt.timedelta(days=5),
+        ),
+    )
+    create_purchase(
+        session,
+        PurchaseIn(
+            asset_id=asset_ids[SEPARATED_ASSET_NAME],
+            amount_cents=SEPARATED_PURCHASE_CENTS,
+            date=first_of_month,
+        ),
+    )
+    reservation = cash.create_reservation(
+        session,
+        account_id,
+        ReservationIn(
+            class_id=class_id,
+            amount_cents=SEPARATED_THIS_MONTH_CENTS,
+            date=min(today, first_of_month + dt.timedelta(days=1)),
+        ),
+    )
+    cash.release_reservation(
+        session, reservation.id, ReleaseIn(amount_cents=SEPARATED_RELEASE_CENTS, date=today)
+    )
 
 
 def _seed_group(session: Session) -> None:

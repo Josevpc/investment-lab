@@ -7,10 +7,12 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import date
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.errors import ConflictError, InvalidInputError, NotFoundError
+from app.core.money import format_brl
 from app.features.cash import service as cash
 from app.features.portfolio import initial_contribution as initial
 from app.features.portfolio import repository as repo
@@ -38,6 +40,7 @@ from app.features.portfolio.schemas import (
     AssetOut,
     AssetUpdate,
     ClassBreakdown,
+    ClassReservedAmount,
     FiiSegmentBreakdown,
     GroupBreakdown,
     InstitutionBreakdown,
@@ -71,7 +74,8 @@ DEFAULT_CLASSES = [
 TYPE_LABELS = {"acao": "Ações", "etf": "ETFs", "fii": "Fundos imobiliários"}
 SEGMENT_LABELS = {"papel": "Papel", "tijolo": "Tijolo", "sem_segmento": "Sem segmento"}
 # Categorias em que o tipo (ação, ETF, FII) não se aplica; o resto pede o tipo.
-FIXED_INCOME_AND_CRYPTO = {"renda_fixa", "cripto"}
+FIXED_INCOME_KEY = "renda_fixa"
+FIXED_INCOME_AND_CRYPTO = {FIXED_INCOME_KEY, "cripto"}
 
 # Cores sugeridas para categorias novas, em ordem de uso.
 PALETTE = ["#4fb3bf", "#d9728a", "#9bbf5a", "#b89c7a", "#7d8ccf", "#e0795b", "#5fa8a0", "#c78fd0"]
@@ -144,6 +148,13 @@ def update_class(session: Session, class_id: int, data: AssetClassUpdate) -> Ass
         if repo.class_has_active_assets(session, class_id):
             raise ConflictError(
                 "A categoria ainda tem ativos. Mova-os para outra categoria ou arquive-os antes."
+            )
+        separated = cash.reserved_in_class(session, class_id)
+        if separated:
+            raise ConflictError(
+                f"A categoria ainda tem {format_brl(separated)} separados para comprar. Use ou "
+                "libere esse dinheiro antes de arquivar.",
+                reserved_cents=separated,
             )
         if len(repo.list_classes(session)) <= 1:
             raise InvalidInputError("A carteira precisa de ao menos uma categoria.")
@@ -356,12 +367,22 @@ def class_hold_status(session: Session) -> dict[int, ClassHold]:
     }
 
 
-def class_current_values(session: Session) -> dict[int, int]:
-    """Valor por categoria, só dos investimentos: a reserva de emergência fica de fora."""
+def class_current_values(session: Session, *, include_reserved: bool = False) -> dict[int, int]:
+    """Valor por categoria, só dos investimentos: a reserva de emergência fica de fora.
+
+    Com `include_reserved`, soma o dinheiro separado em aberto para cada categoria: ele já tem
+    destino e foi contado no plano do mês em que foi separado, então o próximo aporte deve tratar a
+    categoria como se já o tivesse. A comparação com a meta não o soma: ela mede o que está
+    investido.
+    """
     values = {c.id: 0 for c in repo.list_classes(session)}
     for position in list_positions(session):
         if not position.is_reserve and position.class_id in values:
             values[position.class_id] += position.current_cents
+    if include_reserved:
+        for class_id, cents in cash.reserved_by_class(session).items():
+            if class_id in values:
+                values[class_id] += cents
     return values
 
 
@@ -441,6 +462,7 @@ def _asset_out(
         # banco guarde uma marca antiga (a migração marcou todos os ativos da categoria mantida).
         hold_only=asset.hold_only and asset.purpose != "reserva",
         balance_is_net=asset.balance_is_net,
+        tax_exempt=asset.tax_exempt,
         is_new_investment=initial_movement is not None,
         initial_contribution_cents=initial_movement.amount_cents if initial_movement else None,
         initial_contribution_date=initial_movement.date if initial_movement else None,
@@ -470,6 +492,35 @@ def require_institution(session: Session, institution_id: int) -> Institution:
     if institution is None:
         raise InvalidInputError("Instituição não encontrada.")
     return institution
+
+
+def require_reservable_class(session: Session, class_id: int) -> AssetClass:
+    """Categoria que pode receber dinheiro separado para comprar; senão, 422 em português.
+
+    Recusa a que não existe, a arquivada, a que só tem a reserva de emergência e a "toda mantida"
+    (todos os ativos em "manter posição"): nenhuma delas recebe compra, e o dinheiro ficaria preso.
+    """
+    asset_class = repo.get_class(session, class_id)
+    if asset_class is None:
+        raise InvalidInputError("Categoria não encontrada.")
+    if asset_class.archived:
+        raise InvalidInputError(f"A categoria {asset_class.name} está arquivada.")
+    assets = [
+        asset
+        for asset, _ in repo.list_assets_with_latest(session, include_archived=False)
+        if asset.class_id == class_id
+    ]
+    if assets and all(asset.purpose == "reserva" for asset in assets):
+        raise InvalidInputError(
+            f"{asset_class.name} é a reserva de emergência: ela não recebe dinheiro separado "
+            "para comprar."
+        )
+    if class_hold_status(session)[class_id].status == "all":
+        raise InvalidInputError(
+            f"Todos os ativos de {asset_class.name} estão em 'manter posição': a categoria "
+            "não recebe compras, então não dá para separar dinheiro para ela."
+        )
+    return asset_class
 
 
 def account_has_active_assets(session: Session, account_id: int) -> bool:
@@ -525,9 +576,38 @@ def _check_hold(data: AssetCreate | AssetUpdate) -> None:
         )
 
 
+def check_tax_exempt(is_fixed_income: bool, tax_exempt: bool, balance_is_net: bool) -> None:
+    """Isento de IR só existe na renda fixa, e o saldo de um isento não tem imposto a descontar."""
+    if tax_exempt and not is_fixed_income:
+        raise InvalidInputError("Só ativos de renda fixa podem ser isentos de IR.")
+    if tax_exempt and balance_is_net:
+        raise InvalidInputError(
+            "Ativo isento não tem saldo líquido de IR: o saldo já é o que você recebe."
+        )
+
+
+def check_assets_tax_exempt(session: Session) -> None:
+    """Confere a regra do isento em todos os ativos gravados (usado ao restaurar um backup).
+
+    Um arquivo editado à mão poderia trazer isento fora da renda fixa ou junto com saldo líquido,
+    e isso distorceria a comparação com o CDI. Lê só colunas: não depende de objetos em memória.
+    """
+    rows = session.execute(
+        select(Asset.name, Asset.tax_exempt, Asset.balance_is_net, AssetClass.key).join(
+            AssetClass, Asset.class_id == AssetClass.id
+        )
+    )
+    for name, tax_exempt, balance_is_net, class_key in rows:
+        try:
+            check_tax_exempt(class_key == FIXED_INCOME_KEY, tax_exempt, balance_is_net)
+        except InvalidInputError as exc:
+            raise InvalidInputError(f'Ativo "{name}": {exc.message}') from exc
+
+
 def create_asset(session: Session, data: AssetCreate) -> AssetOut:
     _check_hold(data)
     asset_class = _resolve_class(session, data.class_key)
+    check_tax_exempt(asset_class.key == FIXED_INCOME_KEY, data.tax_exempt, data.balance_is_net)
     institution = require_institution(session, data.institution_id)
     asset = Asset(
         name=data.name.strip(),
@@ -545,6 +625,7 @@ def create_asset(session: Session, data: AssetCreate) -> AssetOut:
         account_id=_resolve_account(session, institution, data.account_id),
         hold_only=data.hold_only,
         balance_is_net=data.balance_is_net,
+        tax_exempt=data.tax_exempt,
     )
     try:
         session.add(asset)
@@ -577,6 +658,19 @@ def update_asset(session: Session, asset_id: int, data: AssetUpdate) -> AssetOut
         session, data.class_key, allow_archived=data.class_key == asset.asset_class.key
     )
     institution = require_institution(session, data.institution_id)
+    # As marcas omitidas ficam como estão, salvo ao sair da renda fixa: lá o isento não existe e o
+    # saldo líquido era da renda fixa, então as duas caem. Marca enviada vale como veio.
+    is_fixed_income = asset_class.key == FIXED_INCOME_KEY
+    left_fixed_income = asset.asset_class.key == FIXED_INCOME_KEY and not is_fixed_income
+    tax_exempt = (
+        asset.tax_exempt and is_fixed_income if data.tax_exempt is None else data.tax_exempt
+    )
+    balance_is_net = (
+        asset.balance_is_net and not left_fixed_income
+        if data.balance_is_net is None
+        else data.balance_is_net
+    )
+    check_tax_exempt(is_fixed_income, tax_exempt, balance_is_net)
     account_id = _account_for_update(session, asset, institution, data.account_id)
     asset.account_id = account_id
     asset.name = data.name.strip()
@@ -594,8 +688,8 @@ def update_asset(session: Session, asset_id: int, data: AssetUpdate) -> AssetOut
         asset.hold_only = asset.hold_only and not data.archived and data.purpose != "reserva"
     else:
         asset.hold_only = data.hold_only
-    if data.balance_is_net is not None:
-        asset.balance_is_net = data.balance_is_net
+    asset.balance_is_net = balance_is_net
+    asset.tax_exempt = tax_exempt
     asset.purpose = data.purpose
     asset.asset_type = data.asset_type
     asset.fii_segment = data.fii_segment
@@ -759,7 +853,11 @@ def get_summary(session: Session) -> PortfolioSummary:
                 seg[3] += proventos.get(asset.id, 0)
 
     investments_current = total_current - reserve_current
-    cash_cents = cash.consolidated_cash_cents(session)
+    today = date.today()
+    cash_cents = cash.consolidated_cash_cents(session, today)
+    # Mesma data do caixa, para o caixa livre fechar a conta: caixa = separado + livre.
+    reserved_now = cash.reserved_by_class(session, today)
+    reserved = sum(reserved_now.values())
     typed_total = sum(row[1] for row in by_type.values())
     fii_total = sum(row[1] for row in by_segment.values())
 
@@ -774,6 +872,16 @@ def get_summary(session: Session) -> PortfolioSummary:
         proventos_cents=sum(proventos.values()),
         cash_cents=cash_cents,
         total_with_cash_cents=total_current + cash_cents,
+        reserved_cents=reserved,
+        free_cash_cents=cash_cents - reserved,
+        net_worth_cents=total_current + reserved,
+        # Arquivadas inclusive: a chave nunca some, mesmo que o separado fique numa categoria
+        # arquivada depois.
+        reserved_by_class=[
+            ClassReservedAmount(class_key=c.key, reserved_cents=reserved_now[c.id])
+            for c in repo.list_classes(session, include_archived=True)
+            if reserved_now.get(c.id)
+        ],
         by_type=[
             TypeBreakdown(
                 asset_type=key,

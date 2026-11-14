@@ -8,16 +8,17 @@ from app.core.db import Base
 
 
 class BenchmarkRate(Base):
-    """Taxa acumulada de um índice de referência (CDI ou Selic) em um mês.
+    """Taxa de um índice de referência (CDI, Selic ou IPCA) em um mês.
 
-    `rate_ppm` guarda a taxa em partes por milhão de 1 (1,08% = 10.800), sem ponto flutuante.
+    `rate_ppm` guarda a taxa em partes por milhão de 1 (1,08% = 10.800), sem ponto flutuante. A do
+    IPCA pode ser negativa (deflação). Mês que o IBGE ainda não divulgou simplesmente não tem linha.
     """
 
     __tablename__ = "benchmark_rate"
     __table_args__ = (UniqueConstraint("series", "month", name="uq_benchmark_series_month"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    series: Mapped[str] = mapped_column(String(8))  # "cdi" ou "selic"
+    series: Mapped[str] = mapped_column(String(8))  # "cdi", "selic" ou "ipca"
     month: Mapped[str] = mapped_column(String(7))  # AAAA-MM
     rate_ppm: Mapped[int] = mapped_column(Integer)
     fetched_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -40,15 +41,18 @@ class BenchmarkDaily(Base):
 
 
 class BenchmarkIndexLevel(Base):
-    """Fechamento diário de um índice de preço (hoje só o Ibovespa), em pontos.
+    """Fechamento diário de um nível de preço: o Ibovespa (série "ibovespa") e o dólar ("usd").
 
     Fica fora de `benchmark_daily` porque nível de índice não é taxa: o CDI guarda quanto rendeu
     no dia e se acumula multiplicando; o Ibovespa guarda onde fechou e o retorno de um período é
     fechamento final dividido pelo inicial. Misturar os dois na mesma coluna convidaria a
     compor pontos como se fossem taxas.
 
-    `close_e2` guarda o fechamento em centésimos de ponto, sem ponto flutuante:
-    129.593,29 pontos = 12.959.329.
+    `close_e2` guarda o fechamento como inteiro, sem ponto flutuante, e a ESCALA depende da série
+    (o nome da coluna ficou do Ibovespa): "ibovespa" em centésimos de ponto (129.593,29 pontos =
+    12.959.329) e "usd" em décimos de milésimo de real, a PTAX de venda com 4 casas
+    (R$ 5,4321 = 54.321). Só a variação entre dois fechamentos da mesma série é usada, então a
+    escala nunca se mistura; ninguém compara ou soma séries diferentes.
     """
 
     __tablename__ = "benchmark_index_level"
@@ -57,7 +61,7 @@ class BenchmarkIndexLevel(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    series: Mapped[str] = mapped_column(String(16))  # hoje só "ibovespa"
+    series: Mapped[str] = mapped_column(String(16))  # "ibovespa" ou "usd"
     date: Mapped[dt.date] = mapped_column(Date)
     close_e2: Mapped[int] = mapped_column(Integer)
     fetched_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

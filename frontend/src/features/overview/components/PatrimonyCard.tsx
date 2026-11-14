@@ -1,11 +1,10 @@
 import { Link } from "react-router-dom";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { RANGES, rangeStart, type RangeKey, useEvolution } from "@/features/history";
-import { useMonthSummary, type PortfolioSummary } from "@/features/portfolio";
-import { AXIS, GRID, tooltipStyle } from "@/shared/lib/chart";
+import { netWorthCents, outsideCashCents, separatedCents, useMonthSummary, type PortfolioSummary } from "@/features/portfolio";
+import { AXIS, GRID, SEPARATED, SEPARATED_LABEL } from "@/shared/lib/chart";
 import {
   currentMonth,
-  formatBRL,
   formatBRLCompact,
   formatDate,
   formatSignedPercent,
@@ -15,6 +14,8 @@ import {
 } from "@/shared/lib/format";
 import { cx, Empty, Loading, Money, Segmented } from "@/shared/ui";
 import { Figure } from "@/shared/ui/Figure";
+import { SEPARATED_PATTERN_ID, SeparatedPattern, separatedDot, SeparatedSwatch } from "@/shared/ui/SeparatedMark";
+import { WealthTooltip, type WealthTooltipRow } from "@/shared/ui/WealthTooltip";
 import { daysBefore, evolutionTitle } from "../lib/header";
 import { AppreciationPill } from "./AppreciationPill";
 
@@ -70,14 +71,26 @@ export function PatrimonyCard({ total, range, onRangeChange }: { total: Portfoli
   const lastDays = useEvolution(daysBefore(today, 30));
   const monthSummary = useMonthSummary(month);
 
-  const points = (evolution.data?.points ?? []).map((p) => ({ date: p.date, total: p.total_cents, invested: p.invested_cents }));
+  // `band` vai do patrimônio até o patrimônio mais o separado: a faixa fica por cima da linha. Numa API sem o separado, o
+  // separado é 0 e a faixa nem é desenhada. (Área empilhada puxaria o eixo para o zero; a faixa em intervalo não.)
+  const points = (evolution.data?.points ?? []).map((p) => ({
+    date: p.date,
+    total: p.total_cents,
+    invested: p.invested_cents,
+    separated: p.reserved_cents ?? 0,
+    band: [p.total_cents, p.total_cents + (p.reserved_cents ?? 0)],
+  }));
+  const hasSeparated = points.some((p) => p.separated > 0);
   // Eixo começando perto dos valores (e não em zero): com patrimônio alto e variação pequena, a linha ficaria chapada.
-  const values = points.flatMap((p) => [p.total, p.invested]);
+  // O topo é o patrimônio mais o separado, senão a faixa sairia do gráfico.
+  const values = points.flatMap((p) => [p.total + p.separated, p.invested]);
   const floor = values.length ? Math.min(...values) : 0;
   const ceil = values.length ? Math.max(...values) : 0;
   const pad = Math.max(Math.round((ceil - floor) * 0.15), 1000);
   const domain: [number, number] = [Math.max(Math.floor((floor - pad) / 10_000) * 10_000, 0), Math.ceil((ceil + pad) / 10_000) * 10_000];
   const gain = total.total_current_cents - total.total_invested_cents;
+  const separated = separatedCents(total);
+  const outsideCash = outsideCashCents(total);
   // A janela pede 30 dias, mas a medição começa no primeiro saldo dentro dela: a data real vai escrita na pílula.
   const appreciation = lastDays.data?.summary?.appreciation_cents;
   const measuredSince = lastDays.data?.summary?.start_date;
@@ -88,11 +101,16 @@ export function PatrimonyCard({ total, range, onRangeChange }: { total: Portfoli
       <Blob />
       <div className="relative">
         <h2 id="patrimonio-titulo" className="text-base text-ink-2">
-          Patrimônio atual
+          {separated > 0 ? "Patrimônio total" : "Patrimônio atual"}
         </h2>
         <p className="mt-1 break-words font-serif text-[2.5rem] leading-none sm:text-display">
-          <Money cents={total.total_current_cents} />
+          <Money cents={netWorthCents(total)} />
         </p>
+        {separated > 0 && (
+          <p className="mt-2 text-base text-ink-2">
+            inclui <Money cents={separated} /> separado, ainda não investido
+          </p>
+        )}
 
         <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
           {appreciation !== undefined && measuredSince ? (
@@ -109,9 +127,9 @@ export function PatrimonyCard({ total, range, onRangeChange }: { total: Portfoli
           )}
         </div>
 
-        {Boolean(total.cash_cents) && (
+        {Boolean(outsideCash) && (
           <p className="mt-3 text-base text-ink-2">
-            Fora desse total, <Money cents={total.cash_cents} /> em caixa nas contas, ainda não investidos.{" "}
+            Fora desse total, <Money cents={outsideCash} /> em caixa nas contas, {separated > 0 ? "sem destino e " : ""}ainda não investidos.{" "}
             <Link to="/carteira/contas" className={linkClass}>
               Ver caixa
             </Link>
@@ -163,20 +181,40 @@ export function PatrimonyCard({ total, range, onRangeChange }: { total: Portfoli
           {points.length >= 2 && (
             <div
               role="img"
-              aria-label={`${title}. Linha do patrimônio e linha pontilhada do valor investido, nas datas em que você atualizou os saldos. Os valores estão na tabela logo abaixo.`}
+              aria-label={`${title}. Linha do patrimônio e linha pontilhada do valor investido${hasSeparated ? `, com a faixa hachurada "${SEPARATED_LABEL}" por cima do patrimônio nas datas em que há dinheiro separado` : ""}, nas datas em que você atualizou os saldos. Os valores estão na tabela logo abaixo.`}
               className="h-64 sm:h-72"
             >
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={points} margin={{ top: 12, right: 12, bottom: 0, left: 0 }}>
+                  {hasSeparated && (
+                    <defs>
+                      <SeparatedPattern />
+                    </defs>
+                  )}
                   <CartesianGrid stroke={GRID} vertical={false} />
                   {/* tickMargin e padding à esquerda: sem eles o primeiro rótulo de data encostava no último valor do eixo vertical. */}
                   <XAxis dataKey="date" tickFormatter={formatTickDate} stroke={AXIS} fontSize={13} tickLine={false} axisLine={false} minTickGap={24} tickMargin={10} padding={{ left: 24 }} />
                   <YAxis domain={domain} tickFormatter={formatBRLCompact} stroke={AXIS} fontSize={13} width={86} tickLine={false} axisLine={false} />
                   <Tooltip
-                    contentStyle={tooltipStyle}
-                    labelFormatter={(label) => formatDate(String(label))}
-                    formatter={(value, name) => [formatBRL(Number(value)), String(name)]}
+                    content={(props) => (
+                      <WealthTooltip active={props.active} payload={props.payload as unknown as readonly { payload?: WealthTooltipRow }[]} />
+                    )}
                   />
+                  {hasSeparated && (
+                    <Area
+                      isAnimationActive={false}
+                      type="monotone"
+                      dataKey="band"
+                      name={SEPARATED_LABEL}
+                      stroke={SEPARATED}
+                      strokeWidth={2}
+                      strokeDasharray="5 3"
+                      fill={`url(#${SEPARATED_PATTERN_ID})`}
+                      fillOpacity={1}
+                      dot={separatedDot}
+                      activeDot={false}
+                    />
+                  )}
                   <Area
                     isAnimationActive={false}
                     type="monotone"
@@ -218,12 +256,17 @@ export function PatrimonyCard({ total, range, onRangeChange }: { total: Portfoli
               <li className="flex items-center gap-2">
                 <Swatch dotted /> Investido (o que entrou)
               </li>
+              {hasSeparated && (
+                <li className="flex items-center gap-2">
+                  <SeparatedSwatch /> {SEPARATED_LABEL}
+                </li>
+              )}
             </ul>
             <details className="mt-3">
               <summary className={cx(linkClass, "cursor-pointer")}>Ver como tabela</summary>
               <div className="mt-2 max-h-72 overflow-y-auto rounded-field">
                 <table className="w-full text-base">
-                  <caption className="sr-only">{title}: patrimônio e valor investido em cada data de saldo, da mais antiga para a mais recente</caption>
+                  <caption className="sr-only">{title}: patrimônio, valor investido{hasSeparated ? " e dinheiro separado" : ""} em cada data de saldo, da mais antiga para a mais recente</caption>
                   <thead className="sticky top-0 bg-card text-left text-sm text-ink-3">
                     <tr>
                       <th scope="col" className="px-3 py-2 font-normal">
@@ -235,6 +278,11 @@ export function PatrimonyCard({ total, range, onRangeChange }: { total: Portfoli
                       <th scope="col" className="px-3 py-2 text-right font-normal">
                         Investido
                       </th>
+                      {hasSeparated && (
+                        <th scope="col" className="px-3 py-2 text-right font-normal">
+                          Separado
+                        </th>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -246,9 +294,14 @@ export function PatrimonyCard({ total, range, onRangeChange }: { total: Portfoli
                         <td className="tabular px-3 py-2 text-right">
                           <Money cents={p.total} />
                         </td>
-                        <td className="tabular rounded-r-field px-3 py-2 text-right">
+                        <td className={cx("tabular px-3 py-2 text-right", !hasSeparated && "rounded-r-field")}>
                           <Money cents={p.invested} />
                         </td>
+                        {hasSeparated && (
+                          <td className="tabular rounded-r-field px-3 py-2 text-right">
+                            <Money cents={p.separated} />
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>

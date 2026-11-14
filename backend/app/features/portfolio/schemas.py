@@ -160,6 +160,8 @@ class AssetCreate(_AssetFields):
     hold_only: bool = False
     # O saldo digitado já vem sem o IR (padrão: bruto).
     balance_is_net: bool = False
+    # Renda fixa isenta de IR (LCI, LCA...); não combina com saldo líquido.
+    tax_exempt: bool = False
     # Ativo NOVO: o investido do cadastro é dinheiro que entrou agora e vira um aporte (inicial) no
     # diário. Falso: ativo que você já tinha, o valor entra só como ponto de partida.
     is_new_investment: bool = False
@@ -176,6 +178,8 @@ class AssetUpdate(_AssetFields):
     hold_only: bool | None = None
     # Omitido (ou null) mantém a marca de saldo líquido atual.
     balance_is_net: bool | None = None
+    # Omitido (ou null) mantém a marca de isento de IR.
+    tax_exempt: bool | None = None
     # Omitido (ou null) mantém a marca de ativo novo; true/false cria ou remove o aporte inicial.
     is_new_investment: bool | None = None
 
@@ -217,7 +221,7 @@ class BalanceIn(BaseModel):
     # Só para contas com caixa ativado. Falso (padrão): o aporte é dinheiro novo, vira depósito
     # + compra no caixa. Verdadeiro: o aporte sai do caixa que já está na conta (só a compra).
     use_cash: bool = False
-    # Moedas compradas no aporte (cripto): somam à quantidade do ativo (até 8 casas).
+    # Cotas ou moedas compradas no aporte: somam à quantidade do ativo (até 8 casas).
     quantity_added: str | None = Field(default=None, max_length=40)
     # Aporte fora da meta: vale só para o aporte criado aqui (`contribution_cents > 0`); sem aporte
     # é ignorado. Conta em tudo (investido, rentabilidade, caixa), menos no plano do mês.
@@ -357,6 +361,10 @@ class MovementOut(BaseModel):
     # Aporte fora da meta: conta no investido e nos saldos, mas não no plano do mês nem na sequência
     # (nem no ritmo de aporte).
     off_goal: bool = False
+    # Quanto do movimento saiu do dinheiro separado (0 = nada, só caixa livre). Na resposta de
+    # desfazer é o que voltou a ficar separado. None nas respostas que não calculam isso (criar
+    # resgate, provento ou transferência).
+    from_reserved_cents: int | None = None
 
 
 class WithdrawalOut(BaseModel):
@@ -397,14 +405,28 @@ class PurchaseOut(BaseModel):
     account_id: int
     deposit_cents: int  # depósito gravado junto (0 se não houve)
     cash_balance_cents: int  # caixa da conta ao fim do dia da compra
+    # Como a compra foi paga: o separado da categoria vai primeiro, o resto sai do caixa livre.
+    # from_reserved_cents + from_free_cents = valor da compra.
+    from_reserved_cents: int
+    from_free_cents: int
+    reserved_left_cents: int  # o que continua separado para a categoria na conta, depois da compra
 
 
 class ClassMonthAmount(BaseModel):
     class_key: str
     class_name: str
     color: str
-    amount_cents: int  # tudo o que foi aportado na categoria no mês, marcados inclusive
+    # Tudo o que foi aportado na categoria no mês, marcados inclusive, mais o que foi separado nele
+    # (`reserved_cents`) e menos a parte das compras paga com separado de antes
+    # (`from_reserved_cents`), que já contou no mês em que foi separada.
+    amount_cents: int
     goal_cents: int = 0  # parte de amount_cents que conta na meta (sem os aportes fora da meta)
+    # Dinheiro separado para a categoria com data neste mês. Já está em amount_cents e goal_cents,
+    # mesmo que depois tenha sido usado numa compra ou liberado.
+    reserved_cents: int = 0
+    # Parte das compras deste mês paga com separado. Só informa: já saiu de amount_cents e de
+    # goal_cents, porque o dinheiro contou no mês em que foi separado.
+    from_reserved_cents: int = 0
 
 
 class NewAssetAmount(BaseModel):
@@ -417,12 +439,15 @@ class MonthSummary(BaseModel):
     month: str
     by_class: list[ClassMonthAmount]
     reserve_cents: int
-    # registered_cents (aportes lançados) + new_assets_cents (aportes iniciais de ativos novos).
-    # O total, as categorias e a reserva já incluem os dois, e também os aportes fora da meta.
+    # registered_cents (aportes lançados, sem a parte paga com separado de antes) + new_assets_cents
+    # (aportes iniciais de ativos novos) + reserved_cents (separado no mês). O total, as categorias
+    # e a reserva já incluem os três, e também os aportes fora da meta.
     total_cents: int
     registered_cents: int
     new_assets_cents: int
     new_assets: list[NewAssetAmount]
+    # Dinheiro separado no mês, de todas as categorias (soma dos reserved_cents de by_class).
+    reserved_cents: int = 0
     # Parte da reserva que conta na meta (sem os aportes fora da meta).
     reserve_goal_cents: int = 0
     # Aportes marcados "fora da meta" no mês (reserva e categorias juntas, aporte inicial incluso).
@@ -452,6 +477,7 @@ class AssetOut(BaseModel):
     account_id: int | None
     hold_only: bool  # manter posição: não recebe aportes novos
     balance_is_net: bool  # o saldo digitado já vem com o IR descontado
+    tax_exempt: bool  # renda fixa isenta de IR (LCI, LCA...)
     # Ativo novo: tem aporte inicial no diário (valor e data dele; nulos se o ativo é antigo).
     is_new_investment: bool
     initial_contribution_cents: int | None
@@ -463,6 +489,15 @@ class AssetOut(BaseModel):
     proventos_cents: int  # proventos recebidos (FIIs, dividendos)
     total_return_bps: int | None  # inclui proventos
     valuation_date: dt.date
+
+
+class BalanceOut(AssetOut):
+    """O ativo depois do fechamento. Com `use_cash` e aporte, diz como o caixa pagou o aporte; nos
+    outros casos os três campos vêm nulos."""
+
+    from_reserved_cents: int | None = None
+    from_free_cents: int | None = None
+    reserved_left_cents: int | None = None  # o que continua separado para a categoria na conta
 
 
 class ClassBreakdown(BaseModel):
@@ -517,6 +552,11 @@ class FiiSegmentBreakdown(BaseModel):
     share_bps: int
 
 
+class ClassReservedAmount(BaseModel):
+    class_key: str
+    reserved_cents: int
+
+
 class PortfolioSummary(BaseModel):
     # Totais incluem a reserva de emergência; `by_class`, `by_type` e as participações cobrem
     # só os investimentos.
@@ -532,6 +572,13 @@ class PortfolioSummary(BaseModel):
     # diluir a rentabilidade. `total_with_cash_cents` = total_current_cents + cash_cents.
     cash_cents: int
     total_with_cash_cents: int
+    # Dinheiro separado para comprar (em aberto hoje, todas as categorias) e o resto do caixa, que
+    # segue livre. O separado não entra no investido nem na rentabilidade: só no patrimônio,
+    # `net_worth_cents` = total_current_cents + reserved_cents. Caixa livre fica fora dele.
+    reserved_cents: int = 0
+    free_cash_cents: int = 0
+    net_worth_cents: int = 0
+    reserved_by_class: list[ClassReservedAmount] = Field(default_factory=list)
     by_class: list[ClassBreakdown]
     # Só apresentação: os grupos somam as categorias deles (a reserva fica de fora, como em
     # `by_class`).

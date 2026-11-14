@@ -1,18 +1,20 @@
 import { api } from "@/shared/lib/api";
 import type { AssetVsCdi, Performance, PerformanceInput, Trajectory, TrajectoryInput } from "./types";
 
-function period(from?: string, to?: string): string {
+function period(from?: string, to?: string, irRateBps?: number): string {
   const params = new URLSearchParams();
   if (from) params.set("from", from);
   if (to) params.set("to", to);
+  if (irRateBps !== undefined) params.set("ir_rate_bps", String(irRateBps));
   const text = params.toString();
   return text ? `?${text}` : "";
 }
 
 export const analyticsApi = {
-  assetVsCdi: (assetId: number, from?: string, to?: string) =>
-    api.get<AssetVsCdi>(`/analytics/assets/${assetId}/vs-cdi${period(from, to)}`),
-  assetsVsCdi: (from?: string, to?: string) => api.get<AssetVsCdi[]>(`/analytics/assets-vs-cdi${period(from, to)}`),
+  assetVsCdi: (assetId: number, from?: string, to?: string, irRateBps?: number) =>
+    api.get<AssetVsCdi>(`/analytics/assets/${assetId}/vs-cdi${period(from, to, irRateBps)}`),
+  assetsVsCdi: (from?: string, to?: string, irRateBps?: number) =>
+    api.get<AssetVsCdi[]>(`/analytics/assets-vs-cdi${period(from, to, irRateBps)}`),
   trajectory: (input: TrajectoryInput) => api.post<Trajectory>("/analytics/trajectory", input),
   performance: ({ scope, includeReserve, from }: PerformanceInput) => {
     const params = new URLSearchParams({ scope, include_reserve: String(includeReserve) });

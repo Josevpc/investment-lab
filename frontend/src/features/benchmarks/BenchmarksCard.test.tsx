@@ -10,11 +10,16 @@ function status(overrides: Partial<BenchmarkStatus> = {}): BenchmarkStatus {
     source: "Banco Central (SGS) e B3",
     updated_at: "2026-10-17T08:30:00",
     stale: false,
-    series: [{ series: "cdi", label: "CDI", months: 24, covered_from: "2024-10", covered_through: "2026-09" }],
+    series: [
+      { series: "cdi", label: "CDI", months: 24, covered_from: "2024-10", covered_through: "2026-09" },
+      { series: "ipca", label: "IPCA", months: 24, covered_from: "2024-09", covered_through: "2026-08" },
+    ],
     daily_days: 500,
     daily_through: "2026-10-16",
     index_days: 480,
     index_through: "2026-10-16",
+    usd_days: 470,
+    usd_through: "2026-10-15",
     ...overrides,
   };
 }
@@ -51,6 +56,40 @@ describe("Índices de referência em Configurações", () => {
     renderCard(status({ index_days: 0, index_through: null }));
     const line = (await screen.findByText(/Ibovespa \(para comparar/)).closest("p")!;
     expect(line).toHaveTextContent("ainda não baixado");
+  });
+
+  it("lista o IPCA entre as séries mensais, com o último mês disponível", async () => {
+    renderCard(status());
+    const item = (await screen.findByText("IPCA")).closest("li")!;
+    expect(item).toHaveTextContent("24 meses, de set/2024 a ago/2026");
+  });
+
+  it("dólar completo: quantos dias estão guardados e até quando", async () => {
+    renderCard(status());
+    const line = (await screen.findByText(/Dólar \(PTAX, para comparar cripto\)/)).closest("p")!;
+    expect(line).toHaveTextContent("470 dias, até 15/10/2026");
+  });
+
+  it("dólar parcial: mostra a data real onde a cobertura termina, sem fingir que está em dia", async () => {
+    renderCard(status({ usd_days: 90, usd_through: "2026-07-31" }));
+    const line = (await screen.findByText(/Dólar \(PTAX, para comparar cripto\)/)).closest("p")!;
+    expect(line).toHaveTextContent("90 dias, até 31/07/2026");
+  });
+
+  it("dólar ausente: diz que ainda não foi baixado", async () => {
+    renderCard(status({ usd_days: 0, usd_through: null }));
+    const line = (await screen.findByText(/Dólar \(PTAX, para comparar cripto\)/)).closest("p")!;
+    expect(line).toHaveTextContent("ainda não baixado");
+  });
+
+  it("falha só do dólar ou do IPCA: sucesso mantido e o motivo aparece como aviso", async () => {
+    const user = userEvent.setup();
+    renderCard(status(), { ok: true, rows_saved: 8, errors: ["Dólar: serviço fora do ar", "IPCA: sem resposta do IBGE"] });
+
+    await user.click(await screen.findByRole("button", { name: "Atualizar agora" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Atualizado: 8 valores gravados.");
+    expect(screen.getByText(/Dólar: serviço fora do ar\. IPCA: sem resposta do IBGE\. O restante foi salvo/)).toBeInTheDocument();
   });
 
   it("falha só do Ibovespa: mantém o sucesso e mostra o motivo como aviso", async () => {

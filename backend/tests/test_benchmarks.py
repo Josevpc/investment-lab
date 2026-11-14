@@ -16,6 +16,7 @@ def fake_fetcher(series, start, end):
     base = {
         "cdi": [("2026-01", 11600), ("2026-02", 10000)],
         "selic": [("2026-01", 11600), ("2026-02", 10000)],
+        "ipca": [("2026-01", 4200), ("2026-02", -200)],
     }
     return base[series]
 
@@ -74,6 +75,8 @@ def serve(monkeypatch, payload=None, *, http_status=None):
 FETCHES = {
     "cdi diário": lambda: bcb.fetch_daily_cdi(dt.date(2026, 10, 17), dt.date(2026, 10, 18)),
     "série mensal": lambda: bcb.fetch_series("cdi", dt.date(2026, 10, 17), dt.date(2026, 10, 18)),
+    "ipca": lambda: bcb.fetch_series("ipca", dt.date(2026, 10, 17), dt.date(2026, 10, 18)),
+    "dólar diário": lambda: bcb.fetch_daily_usd(dt.date(2026, 10, 17), dt.date(2026, 10, 18)),
 }
 
 
@@ -126,7 +129,7 @@ def test_refresh_saves_both_series_and_reports_coverage(client):
     session = next(client.app.dependency_overrides[get_session]())
     result = refresh(session, fetcher=fake_fetcher)
     assert result.ok is True
-    assert result.rows_saved == 4
+    assert result.rows_saved == 6  # CDI, Selic e IPCA: dois meses cada
     assert result.errors == []
     status = {s.series: s for s in result.status.series}
     assert (status["cdi"].months, status["cdi"].covered_from, status["cdi"].covered_through) == (
@@ -136,6 +139,8 @@ def test_refresh_saves_both_series_and_reports_coverage(client):
     )
     assert result.status.stale is False
     assert monthly_rates(session, "selic") == {"2026-01": 11_600, "2026-02": 10_000}
+    assert monthly_rates(session, "ipca") == {"2026-01": 4_200, "2026-02": -200}  # deflação cabe
+    assert status["ipca"].covered_through == "2026-02"
 
 
 def test_refresh_updates_existing_rates_instead_of_duplicating(client):
@@ -162,7 +167,7 @@ def test_refresh_survives_a_failing_series_and_reports_it(client):
     session = next(client.app.dependency_overrides[get_session]())
     result = refresh(session, fetcher=flaky)
     assert result.ok is True  # o CDI foi salvo
-    assert result.rows_saved == 1
+    assert result.rows_saved == 2  # CDI e IPCA
     assert result.errors == ["Selic: sem rede"]
 
 
@@ -175,7 +180,7 @@ def test_refresh_never_raises_when_everything_fails(client):
     session = next(client.app.dependency_overrides[get_session]())
     result = refresh(session, fetcher=offline)
     assert result.ok is False
-    assert len(result.errors) == 2
+    assert len(result.errors) == 3  # CDI, Selic e IPCA
 
 
 def test_refresh_if_stale_only_fetches_when_old_or_empty(client):
@@ -190,7 +195,7 @@ def test_refresh_if_stale_only_fetches_when_old_or_empty(client):
     session = next(client.app.dependency_overrides[get_session]())
     assert refresh_if_stale(session, fetcher=counting) is not None  # banco vazio
     assert refresh_if_stale(session, fetcher=counting) is None  # recém-atualizado
-    assert calls == ["cdi", "selic"]
+    assert calls == ["cdi", "selic", "ipca"]
 
 
 # ---- API ---------------------------------------------------------------------------------
@@ -201,7 +206,7 @@ def test_status_endpoint_starts_empty_and_stale(client):
     assert body["updated_at"] is None
     assert body["stale"] is True
     assert body["source"].startswith("Banco Central do Brasil")
-    assert {s["series"]: s["months"] for s in body["series"]} == {"cdi": 0, "selic": 0}
+    assert {s["series"]: s["months"] for s in body["series"]} == {"cdi": 0, "selic": 0, "ipca": 0}
 
 
 def fake_daily(start, end):
@@ -214,9 +219,11 @@ def test_refresh_endpoint_uses_the_central_bank_client(client, monkeypatch):
     monkeypatch.setattr(
         bcb, "fetch_ibovespa", lambda start, end: [(dt.date(2026, 10, 2), 12_959_329)]
     )
+    monkeypatch.setattr(bcb, "fetch_daily_usd", lambda start, end: [(dt.date(2026, 10, 2), 54_321)])
     response = client.post(f"{API}/refresh")
     assert response.status_code == 200
-    assert response.json()["rows_saved"] == 4 + 2 + 1  # taxas mensais + CDI diário + Ibovespa
+    # taxas mensais (CDI, Selic, IPCA) + CDI diário + Ibovespa + dólar
+    assert response.json()["rows_saved"] == 6 + 2 + 1 + 1
     assert response.json()["status"]["daily_days"] == 2
     assert response.json()["status"]["daily_through"] == "2026-10-02"
     assert client.get(f"{API}/status").json()["stale"] is False
@@ -229,6 +236,7 @@ def test_refresh_endpoint_returns_502_when_the_central_bank_is_unreachable(clien
     monkeypatch.setattr(bcb, "fetch_series", offline)
     monkeypatch.setattr(bcb, "fetch_daily_cdi", lambda start, end: offline("cdi", start, end))
     monkeypatch.setattr(bcb, "fetch_ibovespa", lambda start, end: offline("ibovespa", start, end))
+    monkeypatch.setattr(bcb, "fetch_daily_usd", lambda start, end: offline("usd", start, end))
     response = client.post(f"{API}/refresh")
     assert response.status_code == 502
     assert "Banco Central" in response.json()["detail"]

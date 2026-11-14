@@ -147,6 +147,28 @@ describe("Carteira > Resumo: totais", () => {
   });
 });
 
+describe("Carteira > Resumo: dinheiro separado", () => {
+  it("com separado, vira Patrimônio total, diz quanto está incluído e o caixa de fora é só o livre", async () => {
+    renderTab({ summary: { ...summary, reserved_cents: 8_000, net_worth_cents: 109_000, free_cash_cents: 2_000, cash_cents: 10_000 } });
+    const totals = await screen.findByRole("region", { name: "Totais da carteira" });
+    await within(totals).findByText("R$ 1.090,00");
+
+    const figure = within(totals).getByText("Patrimônio total").parentElement!;
+    expect(figure).toHaveTextContent("R$ 1.090,00");
+    expect(figure).toHaveTextContent("Inclui R$ 80,00 separado, ainda não investido");
+    expect(totals).toHaveTextContent("Caixa livre nas contas: R$ 20,00");
+    expect(within(totals).queryByText("Patrimônio atual")).not.toBeInTheDocument();
+  });
+
+  it("sem separado, nada muda", async () => {
+    renderTab();
+    const totals = await screen.findByRole("region", { name: "Totais da carteira" });
+    await within(totals).findByText("R$ 1.010,00");
+    expect(within(totals).queryByText("Patrimônio total")).not.toBeInTheDocument();
+    expect(totals).not.toHaveTextContent("separado");
+  });
+});
+
 describe("Carteira > Resumo: carteira por categoria", () => {
   it("cada categoria é recolhível e mostra, fechada, nome, quantidade de ativos, valor e '% · meta %'", async () => {
     renderTab();

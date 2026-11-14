@@ -17,8 +17,12 @@ export interface Account {
   /** Tem saldo inicial: o caixa da conta está ativado. */
   cash_enabled: boolean;
   opening_date: string | null;
-  /** Caixa de hoje (0 se o caixa não está ativado). */
+  /** Caixa de hoje (0 se o caixa não está ativado). Total na conta: separado + livre. */
   balance_cents: number;
+  /** Parte do caixa separada para comprar uma categoria (ainda não investida). Ausente numa API anterior ao separado. */
+  reserved_cents?: number;
+  /** Parte do caixa que não tem destino: `balance_cents - reserved_cents`. Ausente numa API anterior ao separado. */
+  free_cents?: number;
 }
 
 export interface Entry {
@@ -50,7 +54,15 @@ export interface Statement {
 export interface CashBalance {
   as_of: string;
   total_cents: number;
-  accounts: { account_id: number; name: string; archived: boolean; cash_enabled: boolean; balance_cents: number }[];
+  accounts: {
+    account_id: number;
+    name: string;
+    archived: boolean;
+    cash_enabled: boolean;
+    balance_cents: number;
+    reserved_cents?: number;
+    free_cents?: number;
+  }[];
 }
 
 export interface ContributedCapital {
@@ -78,6 +90,40 @@ export interface TransferResult {
   amount_cents: number;
   from_entry: Entry;
   to_entry: Entry;
+}
+
+/** Uma separação: dinheiro do caixa da conta guardado para comprar uma categoria. */
+export interface Reservation {
+  id: number;
+  account_id: number;
+  class_id: number;
+  class_name: string;
+  date: string;
+  amount_cents: number;
+  /** Já gasto em compras. */
+  used_cents: number;
+  /** Devolvido ao caixa livre. */
+  released_cents: number;
+  /** amount - used - released. */
+  remaining_cents: number;
+  /** Só sem uso nem liberação. */
+  deletable: boolean;
+}
+
+/** O que está separado numa conta, por categoria e por separação. */
+export interface ReservationsOverview {
+  reserved_cents: number;
+  free_cents: number;
+  by_class: { class_id: number; class_name: string; color: string; remaining_cents: number }[];
+  reservations: Reservation[];
+}
+
+export interface ReservationInput {
+  class_id: number;
+  amount_cents: number;
+  date?: string;
+  /** Registra antes um depósito do mesmo valor (dinheiro novo) e separa. */
+  deposit?: boolean;
 }
 
 /** Lançamentos que a pessoa faz à mão na conta. */

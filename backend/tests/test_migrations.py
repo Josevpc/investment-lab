@@ -344,11 +344,13 @@ def test_index_level_migration_only_adds_an_empty_table_and_keeps_existing_data(
     with sqlite3.connect(db) as conn:
         tables = {r[0] for r in conn.execute("select name from sqlite_master where type='table'")}
         # Sobe até o fim: a tabela desta migração e as criadas depois dela (0016: asset_group;
-        # 0018: offsite_backup_setting).
+        # 0018: offsite_backup_setting; 0020: cash_reservation e cash_reservation_use).
         assert tables - before == {
             "benchmark_index_level",
             "asset_group",
             "offsite_backup_setting",
+            "cash_reservation",
+            "cash_reservation_use",
         }
         assert conn.execute("select count(*) from benchmark_index_level").fetchone()[0] == 0
         assert conn.execute("select name from asset order by id").fetchall() == [

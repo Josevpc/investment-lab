@@ -50,6 +50,7 @@ function asset(extra: Partial<Asset> = {}): Asset {
     archived: false,
     hold_only: false,
     balance_is_net: false,
+    tax_exempt: false,
     purpose: null,
     asset_type: "fii",
     fii_segment: "papel",
@@ -74,41 +75,89 @@ async function chooseOld(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("radio", { name: /^Antigo/ }));
 }
 
-describe("AssetForm: saldo bruto ou líquido de IR", () => {
-  const netSwitch = () => screen.getByRole("switch", { name: "Saldo já com o IR descontado" });
+describe("AssetForm: imposto de renda da renda fixa", () => {
+  const group = () => screen.getByRole("group", { name: "Imposto de renda" });
+  const option = (name: string | RegExp) => within(group()).getByRole("radio", { name });
+  const fixedIncome = (extra: Partial<Asset> = {}) => asset({ class_key: "renda_fixa", asset_type: null, fii_segment: null, ...extra });
 
-  it("na renda fixa começa desligado (bruto) e vai marcado para o back-end quando a pessoa liga", async () => {
-    const { user, onSubmit } = setup();
-    expect(netSwitch()).toHaveAttribute("aria-checked", "false");
-
-    await user.type(screen.getByLabelText("Nome"), "Caixinha");
-    await user.type(screen.getByLabelText("Valor atual (R$)"), "100");
-    await user.click(netSwitch());
-    await chooseOld(user);
-    await user.click(screen.getByRole("button", { name: submitLabel }));
-
-    expect(onSubmit.mock.calls[0][0]).toMatchObject({ balance_is_net: true });
+  it("na renda fixa são três opções, com a de saldo bruto marcada por padrão", () => {
+    setup();
+    expect(within(group()).getAllByRole("radio")).toHaveLength(3);
+    expect(option("Tributado, saldo bruto")).toBeChecked();
+    expect(option("Tributado, saldo já líquido de IR")).not.toBeChecked();
+    expect(option("Isento de IR")).not.toBeChecked();
   });
 
-  it("explica que o app não calcula imposto e só rotula o % do CDI", () => {
+  it("cada opção tem uma dica ligada ao campo, e o app avisa que não calcula imposto", () => {
     setup();
-    expect(netSwitch()).toHaveAccessibleDescription(/não calcula imposto/);
+    expect(option("Tributado, saldo bruto")).toHaveAccessibleDescription(/Tesouro Reserva/);
+    expect(option("Tributado, saldo já líquido de IR")).toHaveAccessibleDescription(/Caixinha/);
+    expect(option("Isento de IR")).toHaveAccessibleDescription(/LCI, LCA/);
+    expect(group()).toHaveTextContent(/não calcula o imposto devido/);
+  });
+
+  it("saldo bruto vai como as duas marcas falsas", async () => {
+    const { user, onSubmit } = setup();
+    await user.type(screen.getByLabelText("Nome"), "Tesouro");
+    await user.type(screen.getByLabelText("Valor atual (R$)"), "100");
+    await chooseOld(user);
+    await user.click(screen.getByRole("button", { name: submitLabel }));
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ balance_is_net: false, tax_exempt: false });
+  });
+
+  it("saldo já líquido vai como balance_is_net verdadeiro e isento falso", async () => {
+    const { user, onSubmit } = setup();
+    await user.type(screen.getByLabelText("Nome"), "Caixinha");
+    await user.type(screen.getByLabelText("Valor atual (R$)"), "100");
+    await user.click(option("Tributado, saldo já líquido de IR"));
+    await chooseOld(user);
+    await user.click(screen.getByRole("button", { name: submitLabel }));
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ balance_is_net: true, tax_exempt: false });
+  });
+
+  it("isento vai como tax_exempt verdadeiro e saldo líquido falso", async () => {
+    const { user, onSubmit } = setup();
+    await user.type(screen.getByLabelText("Nome"), "LCI");
+    await user.type(screen.getByLabelText("Valor atual (R$)"), "100");
+    await user.click(option("Isento de IR"));
+    await chooseOld(user);
+    await user.click(screen.getByRole("button", { name: submitLabel }));
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ balance_is_net: false, tax_exempt: true });
+  });
+
+  it("a escolha é única: trocar de líquido para isento desmarca o líquido", async () => {
+    const { user, onSubmit } = setup(fixedIncome({ balance_is_net: true }));
+    expect(option("Tributado, saldo já líquido de IR")).toBeChecked();
+    await user.click(option("Isento de IR"));
+    expect(option("Tributado, saldo já líquido de IR")).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: submitLabel }));
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ balance_is_net: false, tax_exempt: true });
   });
 
   it("na edição mostra a marca já salva", () => {
-    setup(asset({ class_key: "renda_fixa", asset_type: null, fii_segment: null, balance_is_net: true }));
-    expect(netSwitch()).toHaveAttribute("aria-checked", "true");
+    setup(fixedIncome({ balance_is_net: true }));
+    expect(option("Tributado, saldo já líquido de IR")).toBeChecked();
+    cleanup();
+    setup(fixedIncome({ tax_exempt: true }));
+    expect(option("Isento de IR")).toBeChecked();
   });
 
-  it("fora da renda fixa não aparece e nunca vai marcado", async () => {
-    const { user, onSubmit } = setup(
-      asset({ class_key: "renda_fixa", asset_type: null, fii_segment: null, balance_is_net: true }),
-    );
+  it("o grupo se alcança pelo teclado: as setas trocam a opção", async () => {
+    const { user } = setup();
+    option("Tributado, saldo bruto").focus();
+    await user.keyboard("{ArrowDown}");
+    expect(option("Tributado, saldo já líquido de IR")).toBeChecked();
+    await user.keyboard("{ArrowDown}");
+    expect(option("Isento de IR")).toBeChecked();
+  });
+
+  it("fora da renda fixa o grupo não aparece e as duas marcas vão falsas", async () => {
+    const { user, onSubmit } = setup(fixedIncome({ tax_exempt: true }));
     await user.selectOptions(screen.getByLabelText("Categoria"), "cripto");
-    expect(screen.queryByRole("switch", { name: "Saldo já com o IR descontado" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Imposto de renda" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: submitLabel }));
-    expect(onSubmit.mock.calls[0][0]).toMatchObject({ balance_is_net: false });
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({ balance_is_net: false, tax_exempt: false });
   });
 });
 

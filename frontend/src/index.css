@@ -30,6 +30,7 @@
   --chart-grid: rgb(111 103 90 / 0.22);
   --chart-gold: #7a5c19;
   --chart-muted: #8a8272;
+  --chart-separated: #486a82; /* dinheiro separado: pedra azul escura, 5,4:1 sobre o cartão */
   --tooltip-bg: #fbf8f1;
   --tooltip-fg: #2b2620;
   --tooltip-shadow: 0 2px 4px rgba(70, 50, 20, 0.08), 0 12px 28px -8px rgba(70, 50, 20, 0.28);
@@ -56,6 +57,7 @@
   --chart-grid: rgb(163 153 132 / 0.2);
   --chart-gold: #d9b25e;
   --chart-muted: #8a8272;
+  --chart-separated: #8db3cc; /* 7,4:1 sobre o cartão escuro */
   --tooltip-bg: #2d2721;
   --tooltip-fg: #f1ebdf;
   --tooltip-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.6); /* no escuro o tom do fundo da dica já a separa; a sombra só a destaca */
@@ -70,6 +72,8 @@
   --chart-cat-5: #8b5e7d; /* ameixa */
   --chart-cat-6: #a99b80; /* areia */
   --chart-index: #5b7c93;
+  --chart-ipca: #8b5e7d; /* ameixa: inflação */
+  --chart-usd: #c46f4e; /* argila: câmbio */
 }
 
 @theme inline {
@@ -188,6 +192,15 @@ body {
 :where(a, button, input, select, textarea, summary, [role="slider"], [tabindex]):focus-visible {
   outline: 3px solid var(--gold);
   outline-offset: 2px;
+}
+
+/*
+ * Trecho "separado" (dinheiro guardado para comprar, ainda não investido): hachura diagonal e contorno tracejado,
+ * para não depender da cor nem se confundir com o pontilhado do "Investido". Os gráficos usam o mesmo desenho em SVG.
+ */
+.separated-fill {
+  background-image: repeating-linear-gradient(135deg, var(--chart-separated) 0 1.5px, transparent 1.5px 6px);
+  border: 1.5px dashed var(--chart-separated);
 }
 
 /* Modo "ocultar valores": desfoca números e gráficos; nada é apagado nem recalculado. */

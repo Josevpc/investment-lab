@@ -30,6 +30,14 @@ export interface EvolutionPoint {
   invested_cents: number;
   by_class: Record<string, number>;
   reserve_cents: number;
+  /**
+   * Dinheiro separado para comprar naquela data (ainda não investido), fora de `total_cents`. Ausentes numa API
+   * anterior ao separado: a tela trata como 0.
+   */
+  reserved_cents?: number;
+  reserved_by_class?: Record<string, number>;
+  /** `total_cents + reserved_cents`. */
+  net_worth_cents?: number;
 }
 
 export interface EvolutionSummary {
@@ -47,7 +55,12 @@ export interface EvolutionSummary {
    * não mandam: a tela trata como 0.
    */
   archived_out_cents?: number;
-  /** change_cents - contributions_cents + withdrawals_cents + archived_out_cents. */
+  /**
+   * Separado liberado de volta ao caixa livre no período (>= 0): saiu do patrimônio sem comprar, não é perda. Ausente
+   * numa API anterior ao separado: a tela trata como 0.
+   */
+  released_cents?: number;
+  /** change_cents - contributions_cents + withdrawals_cents + archived_out_cents + released_cents. */
   appreciation_cents: number;
   /**
    * De onde vieram os aportes: "diario" = todos lançados nos ativos (exato);
@@ -70,4 +83,27 @@ export interface SnapshotItemInput {
   class_key: string;
   invested_cents: number;
   current_cents: number;
+}
+
+export interface ContributionsMonth {
+  /** "YYYY-MM". */
+  month: string;
+  /** Aporte do mês, já com o que ficou fora da meta (`goal_cents + off_goal_cents`). */
+  contributed_cents: number;
+  goal_cents: number;
+  off_goal_cents: number;
+  /** Saldo de ativo antigo trazido para o app. Fica fora de `contributed_cents`. */
+  carried_in_cents: number;
+  /** Aporte planejado do mês; null quando o mês não tem plano (não é zero). */
+  planned_cents: number | null;
+  /** Só o mês atual. */
+  in_progress: boolean;
+}
+
+export interface ContributionsByMonth {
+  from_month: string;
+  to_month: string;
+  current_month: string;
+  /** Crescente, um item por mês do intervalo. Vazio quando não há dados e o início não foi pedido. */
+  months: ContributionsMonth[];
 }

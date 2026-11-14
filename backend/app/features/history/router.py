@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.db import get_session
 from app.features.history import service
 from app.features.history.schemas import (
+    ContributionsByMonthOut,
     EvolutionOut,
     SnapshotCreate,
     SnapshotOut,
@@ -36,6 +37,20 @@ def update_snapshot(
 def delete_snapshot(snapshot_id: int, session: Session = Depends(get_session)):
     service.delete_snapshot(session, snapshot_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _today() -> date:
+    return date.today()
+
+
+@router.get("/history/contributions-by-month", response_model=ContributionsByMonthOut)
+def contributions_by_month(
+    from_: str | None = Query(default=None, alias="from"),
+    to: str | None = None,
+    session: Session = Depends(get_session),
+):
+    # O formato (AAAA-MM) é conferido no serviço, para a mensagem de erro sair em português.
+    return service.contributions_by_month(session, from_, to, _today())
 
 
 @router.get("/history/evolution", response_model=EvolutionOut)

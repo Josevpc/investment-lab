@@ -13,6 +13,17 @@ export function useEvolution(from?: string) {
   return useQuery({ queryKey: ["history", "evolution", from ?? "all"], queryFn: () => historyApi.evolution(from) });
 }
 
+/** Prefixo das consultas de aporte por mês: quem muda o que conta como aporte (caixa, compras) invalida por ele. */
+export const CONTRIBUTIONS_BY_MONTH_KEY = ["history", "contributions-by-month"] as const;
+
+/** Aporte de cada mês no período; a chave leva o período, então trocar de 6M para 1A busca de novo. */
+export function useContributionsByMonth(from?: string, to?: string) {
+  return useQuery({
+    queryKey: [...CONTRIBUTIONS_BY_MONTH_KEY, from ?? "all", to ?? "now"],
+    queryFn: () => historyApi.contributionsByMonth(from, to),
+  });
+}
+
 /** O fechamento mexe no histórico e na sequência de meses das metas. */
 function useInvalidateHistory() {
   const client = useQueryClient();

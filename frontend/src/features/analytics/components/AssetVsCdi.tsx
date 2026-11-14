@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { formatBRL, formatDate, formatPercent, formatPointsDiff, formatSignedPercent } from "@/shared/lib/format";
 import { Button, Empty, ErrorBox, Loading, Money, Notice } from "@/shared/ui";
-import { useAssetVsCdi } from "../hooks";
-import { ibovespaGap, ibovespaGapMessage } from "../lib/ibovespa";
-import type { AssetFlow } from "../types";
+import { useAssetVsCdi, useIrRate } from "../hooks";
+import { benchmarkGap, benchmarkGapMessage } from "../lib/benchmarks";
+import type { AssetFlow, AssetVsCdi as AssetVsCdiData } from "../types";
+import { IrRateSelect } from "./IrRateSelect";
 
 const FLOW_LABEL: Record<AssetFlow["kind"], string> = {
   aporte: "Aporte",
@@ -26,6 +27,14 @@ function Metric({ label, value, hint, strong, small }: { label: string; value: s
 const selectClass =
   "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950/60";
 
+/** De onde sai o "% do CDI líquido": isento, saldo já líquido ou saldo bruto com a alíquota escolhida. */
+function netPctHint(p: AssetVsCdiData): string {
+  const rate = p.ir_rate_bps === null ? null : formatPercent(p.ir_rate_bps);
+  if (p.tax_exempt) return rate ? `isento de IR · CDI líquido com IR de ${rate}` : "isento de IR";
+  if (p.balance_is_net) return rate ? `saldo já líquido · CDI líquido com IR de ${rate}` : "saldo já líquido";
+  return rate ? `rendimento e CDI com IR de ${rate} (simulação)` : "";
+}
+
 /**
  * Quanto % do CDI o ativo rendeu. O período padrão é o total (do primeiro ao último saldo digitado);
  * dá para escolher qualquer par de saldos como início e fim.
@@ -33,17 +42,24 @@ const selectClass =
 export function AssetVsCdi({ assetId }: { assetId: number }) {
   const [from, setFrom] = useState<string | null>(null);
   const [to, setTo] = useState<string | null>(null);
-  const query = useAssetVsCdi(assetId, from ?? undefined, to ?? undefined);
+  const [irRate, setIrRate] = useIrRate();
+  const query = useAssetVsCdi(assetId, from ?? undefined, to ?? undefined, irRate);
   const p = query.data;
   const custom = from !== null || to !== null;
-  // O Ibovespa só serve de referência para o que não é renda fixa.
+  // Fora da renda fixa há uma referência de mercado: o dólar para a cripto, o Ibovespa para o resto.
   const fixedIncome = p?.class_key === "renda_fixa";
-  const gap = p && !fixedIncome ? ibovespaGap([p]) : null;
+  const crypto = p?.class_key === "cripto";
+  const reference = crypto
+    ? { key: "usd" as const, name: "dólar", bps: p?.usd_bps ?? null, diff: p?.vs_usd_bps ?? null, through: p?.usd_covered_through ?? null }
+    : { key: "ibovespa" as const, name: "Ibovespa", bps: p?.ibovespa_bps ?? null, diff: p?.vs_ibovespa_bps ?? null, through: p?.ibovespa_covered_through ?? null };
+  const gap = p && !fixedIncome ? benchmarkGap([{ bps: reference.bps, through: reference.through }]) : null;
 
   return (
     <div className="space-y-4">
       {query.isLoading && <Loading />}
       <ErrorBox error={query.error} />
+
+      {fixedIncome && <IrRateSelect value={irRate} onChange={setIrRate} />}
 
       {p && p.dates.length >= 2 && (
         <div className="flex flex-wrap items-end gap-3">
@@ -94,20 +110,28 @@ export function AssetVsCdi({ assetId }: { assetId: number }) {
 
       {p && p.start_date && p.end_date && (
         <>
-          {/* Fica numa gaveta estreita: 5 colunas apertariam "−2,95 p.p."; com o Ibovespa, 3 + 2. */}
-          <div className={`grid grid-cols-2 gap-3 ${fixedIncome ? "lg:grid-cols-4" : "sm:grid-cols-3"}`}>
+          {/* Fica numa gaveta estreita: 5 colunas apertariam "−2,95 p.p."; com a referência (Ibovespa ou dólar), 3 + 2. */}
+          <div className={`grid grid-cols-2 gap-3 ${fixedIncome ? "lg:grid-cols-3" : "sm:grid-cols-3"}`}>
             {fixedIncome ? (
-            <Metric
-              label="% do CDI realizado"
-              strong
-              value={p.pct_of_cdi_bps === null ? "—" : formatPercent(p.pct_of_cdi_bps)}
-              hint={
-                p.contracted_pct_bps !== null
-                  ? `contratado: ${formatPercent(p.contracted_pct_bps)}` +
-                    (p.vs_contracted_bps !== null ? ` (${formatPointsDiff(p.vs_contracted_bps)} do CDI)` : "")
-                  : "ativo sem % do CDI informado"
-              }
-            />
+              <>
+                <Metric
+                  label="% do CDI realizado"
+                  strong
+                  value={p.pct_of_cdi_bps === null ? "—" : formatPercent(p.pct_of_cdi_bps)}
+                  hint={
+                    p.contracted_pct_bps !== null
+                      ? `contratado: ${formatPercent(p.contracted_pct_bps)}` +
+                        (p.vs_contracted_bps !== null ? ` (${formatPointsDiff(p.vs_contracted_bps)} do CDI)` : "")
+                      : "ativo sem % do CDI informado"
+                  }
+                />
+                <Metric
+                  label="% do CDI líquido"
+                  strong
+                  value={p.net_pct_of_cdi_bps === null ? "—" : formatPercent(p.net_pct_of_cdi_bps)}
+                  hint={netPctHint(p)}
+                />
+              </>
             ) : (
               <Metric
                 label="Variação contra o CDI"
@@ -118,19 +142,26 @@ export function AssetVsCdi({ assetId }: { assetId: number }) {
             )}
             {!fixedIncome && (
               <Metric
-                label="Variação contra o Ibovespa"
-                value={p.vs_ibovespa_bps === null ? "—" : formatPointsDiff(p.vs_ibovespa_bps)}
+                label={`Variação contra o ${reference.name}`}
+                value={reference.diff === null ? "—" : formatPointsDiff(reference.diff)}
                 hint={
                   gap
-                    ? p.warnings.some((w) => w.includes("Ibovespa"))
-                      ? "sem Ibovespa no período: veja o aviso abaixo"
-                      : ibovespaGapMessage(gap)
-                    : `variação ${p.return_bps === null ? "—" : formatSignedPercent(p.return_bps)} contra Ibovespa ${p.ibovespa_bps === null ? "—" : formatSignedPercent(p.ibovespa_bps)}`
+                    ? p.warnings.some((w) => w.toLowerCase().includes(reference.name.toLowerCase()))
+                      ? `sem ${reference.name} no período: veja o aviso abaixo`
+                      : benchmarkGapMessage(reference.key, gap)
+                    : `variação ${p.return_bps === null ? "—" : formatSignedPercent(p.return_bps)} contra ${reference.name} ${reference.bps === null ? "—" : formatSignedPercent(reference.bps)}`
                 }
               />
             )}
             <Metric label="Rendimento no período" value={p.yield_cents === null ? "—" : formatBRL(p.yield_cents)} hint={p.return_bps === null ? undefined : `${formatSignedPercent(p.return_bps)} sobre o capital`} />
             <Metric label="CDI no período" value={p.cdi_bps === null ? "—" : formatSignedPercent(p.cdi_bps)} hint="acumulado dia a dia" />
+            {fixedIncome && (
+              <Metric
+                label="CDI líquido no período"
+                value={p.net_cdi_bps === null ? "—" : formatSignedPercent(p.net_cdi_bps)}
+                hint={p.ir_rate_bps === null ? undefined : `CDI depois de IR de ${formatPercent(p.ir_rate_bps)} (simulação)`}
+              />
+            )}
             <Metric small label="Período" value={`${formatDate(p.start_date)} → ${formatDate(p.end_date)}`} hint={custom ? "período escolhido" : "período total"} />
           </div>
 
@@ -264,10 +295,19 @@ export function AssetVsCdi({ assetId }: { assetId: number }) {
         </>
       )}
 
+      {crypto && p?.start_date && (
+        // O dólar mostra quanto do ganho em reais pode ter vindo só do câmbio, mas não é uma conta exata.
+        <Notice>
+          O dólar (PTAX) é só uma referência. Sem a cotação em dólar de cada moeda, não dá para separar o que veio da cripto do que veio do
+          câmbio.
+        </Notice>
+      )}
+      {p?.tax_exempt && <Notice>Isento de IR: o saldo bruto já é o que você recebe.</Notice>}
       {p?.balance_is_net && (
         <Notice>
-          O saldo deste ativo já vem sem o IR. O % do CDI sai menor do que sairia com o saldo bruto e não é comparável ao de um ativo com
-          saldo bruto. O app não calcula imposto. Para mudar, edite o ativo e use &quot;Saldo já com o IR descontado&quot;.
+          O saldo deste ativo já vem sem o IR, então o % do CDI realizado sai menor do que sairia com o saldo bruto e não é comparável ao de
+          um ativo com saldo bruto. Compare pela linha &quot;% do CDI líquido&quot;, que não desconta o imposto de novo. O app não calcula
+          imposto. Para mudar, edite o ativo e escolha &quot;Tributado, saldo bruto&quot;.
         </Notice>
       )}
       {p?.warnings.map((w) => (
@@ -280,7 +320,7 @@ export function AssetVsCdi({ assetId }: { assetId: number }) {
           <strong>Como calculamos:</strong> {p.method} Em períodos curtos e com valores pequenos, centavos e o dia do aporte pesam: use o
           resultado como referência, não como certeza.
           {p.cdi_covered_through && ` CDI diário até ${formatDate(p.cdi_covered_through)}.`}
-          {!fixedIncome && p.ibovespa_covered_through && ` Ibovespa até ${formatDate(p.ibovespa_covered_through)}.`}
+          {!fixedIncome && reference.through && ` ${crypto ? "Dólar" : "Ibovespa"} até ${formatDate(reference.through)}.`}
         </Notice>
       )}
     </div>

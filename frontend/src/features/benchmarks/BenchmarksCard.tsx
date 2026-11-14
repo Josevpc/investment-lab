@@ -8,7 +8,7 @@ function formatDateTime(iso: string): string {
 
 const sentence = (text: string) => (/[.!?]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`);
 
-/** Situação dos índices de referência (CDI, Selic e Ibovespa) e o botão de atualizar. */
+/** Situação dos índices de referência (CDI, Selic, IPCA, Ibovespa e dólar) e o botão de atualizar. */
 export function BenchmarksCard() {
   const status = useBenchmarkStatus();
   const refresh = useRefreshBenchmarks();
@@ -17,7 +17,7 @@ export function BenchmarksCard() {
 
   return (
     <Card
-      title="CDI, Selic e Ibovespa (índices de referência)"
+      title="Índices de referência: CDI, Selic, IPCA, Ibovespa e dólar"
       action={
         <Button variant="secondary" disabled={refresh.isPending} onClick={() => refresh.mutate()}>
           {refresh.isPending ? "Atualizando..." : "Atualizar agora"}
@@ -29,10 +29,10 @@ export function BenchmarksCard() {
       {s && (
         <div className="space-y-3 text-sm">
           <p className="text-slate-600 dark:text-slate-400">
-            Usados no gráfico <strong>Sua carteira vs. mercado</strong> e no % do CDI de cada ativo, em Histórico e na Carteira; o
-            Ibovespa serve de comparação para a renda variável. Fonte: <strong>{s.source}</strong>. A atualização busca os dados na
-            internet e acontece sozinha quando o app abre e os dados estão velhos; sem internet, o app continua funcionando com o que já
-            foi baixado.
+            Usados no gráfico <strong>Sua carteira vs. mercado</strong> e no % do CDI de cada ativo, em Histórico e na Carteira. O
+            Ibovespa serve de comparação para a renda variável, o dólar para a cripto e o IPCA mostra se a carteira rende acima da
+            inflação. Fonte: <strong>{s.source}</strong>. A atualização busca os dados na internet e acontece sozinha quando o app abre
+            e os dados estão velhos; sem internet, o app continua funcionando com o que já foi baixado.
           </p>
           <p>
             Última atualização: <strong>{s.updated_at ? formatDateTime(s.updated_at) : "ainda não houve"}</strong>
@@ -57,9 +57,15 @@ export function BenchmarksCard() {
             </strong>
           </p>
           <p className="text-slate-600 dark:text-slate-400">
-            Ibovespa (para comparar renda variável e cripto):{" "}
+            Ibovespa (para comparar renda variável):{" "}
             <strong>
               {s.index_days === 0 || !s.index_through ? "ainda não baixado" : `${s.index_days} dias, até ${formatDate(s.index_through)}`}
+            </strong>
+          </p>
+          <p className="text-slate-600 dark:text-slate-400">
+            Dólar (PTAX, para comparar cripto):{" "}
+            <strong>
+              {s.usd_days === 0 || !s.usd_through ? "ainda não baixado" : `${s.usd_days} dias, até ${formatDate(s.usd_through)}`}
             </strong>
           </p>
         </div>
@@ -72,7 +78,7 @@ export function BenchmarksCard() {
             já usam os dados novos.
           </p>
         )}
-        {/* Sucesso parcial: o CDI foi salvo e só o Ibovespa (ou outra série) falhou. Avisa sem esconder o sucesso. */}
+        {/* Sucesso parcial: o CDI foi salvo e só o Ibovespa, o dólar ou o IPCA falhou. Avisa sem esconder o sucesso. */}
         {result?.ok && result.errors.length > 0 && (
           <Notice tone="warn">
             {result.errors.map(sentence).join(" ")} O restante foi salvo; tente atualizar de novo mais tarde.

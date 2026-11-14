@@ -2,6 +2,7 @@ import { ApiError } from "@/shared/lib/api";
 import { formatBRL, formatDate } from "@/shared/lib/format";
 import type { MoneyTextPart } from "@/shared/lib/moneyText";
 import type { Account, Entry, EntryKind, ManualKind } from "../types";
+import { freeCents, reservedCents } from "./split";
 
 export const KIND_LABEL: Record<EntryKind, string> = {
   saldo_inicial: "Saldo inicial",
@@ -158,7 +159,7 @@ export function apiAmount(kind: ManualKind, cents: number, direction: Direction 
   return kind === "ajuste" ? cashEffect(kind, cents, direction) : cents;
 }
 
-function dateProblem(date: string, today: string, openingDate: string | null): string | null {
+export function dateProblem(date: string, today: string, openingDate: string | null): string | null {
   if (date === "") return "Informe a data.";
   if (date > today) return "A data não pode ser no futuro.";
   if (openingDate && date < openingDate) {
@@ -177,14 +178,19 @@ export function entryProblem(input: {
   direction?: Direction;
   date: string;
   today: string;
-  account: Pick<Account, "balance_cents" | "opening_date">;
+  account: Pick<Account, "balance_cents" | "opening_date" | "reserved_cents" | "free_cents">;
 }): string | null {
   const { kind, cents, direction = "in", date, today, account } = input;
   if (cents === null || cents <= 0) return "Informe um valor maior que zero.";
   if (cents > MAX_CENTS) return TOO_BIG;
   const problem = dateProblem(date, today, account.opening_date);
   if (problem) return problem;
-  if (cashEffect(kind, cents, direction) < 0 && cents > account.balance_cents) return "É mais do que há no caixa hoje.";
+  // O que está separado para comprar não sai por aqui: só o caixa livre.
+  if (cashEffect(kind, cents, direction) < 0 && cents > freeCents(account)) {
+    return reservedCents(account) > 0
+      ? "É mais do que há no caixa livre. O resto está separado para comprar; libere parte dele antes."
+      : "É mais do que há no caixa hoje.";
+  }
   return null;
 }
 
@@ -211,7 +217,11 @@ export function transferProblem(input: {
       return `A conta de ${role} (${account.name}) só tem caixa a partir de ${formatDate(account.opening_date)}.`;
     }
   }
-  if (cents > from.balance_cents) return "É mais do que há no caixa de hoje da conta de origem.";
+  if (cents > freeCents(from)) {
+    return reservedCents(from) > 0
+      ? "É mais do que há no caixa livre da conta de origem. O resto está separado para comprar."
+      : "É mais do que há no caixa de hoje da conta de origem.";
+  }
   return null;
 }
 

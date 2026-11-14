@@ -22,11 +22,12 @@ export function useActivePlan() {
  * Divisão do aporte entre as classes, calculada pelo back-end. Com `month`, parte da carteira de
  * antes dos aportes já feitos nesse mês, então a sugestão não muda conforme eles são lançados.
  */
-export function useSplit(amountCents: number, mode: SplitMode, planId?: number, month?: string) {
+export function useSplit(amountCents: number, mode: SplitMode, planId?: number, month?: string, enabled = true) {
   return useQuery({
     queryKey: allocationKeys.split(amountCents, mode, planId, month),
     queryFn: () => allocationApi.split(amountCents, mode, planId, month),
     placeholderData: keepPreviousData,
+    enabled,
   });
 }
 

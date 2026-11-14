@@ -9,6 +9,7 @@ import { NewAccountForm } from "./components/NewAccountForm";
 import { CashError } from "./components/parts";
 import { TransferForm } from "./components/TransferForm";
 import { useAccounts, useCashBalance, useContributedCapital } from "./hooks";
+import { freeCents, reservedCents } from "./lib/split";
 import type { Account } from "./types";
 
 const LINK_BUTTON =
@@ -32,6 +33,8 @@ function AccountRow({
     assetsCount === null ? null : assetsCount === 0 ? "nenhum ativo" : assetsCount === 1 ? "1 ativo" : `${assetsCount} ativos`,
     account.cash_enabled && account.opening_date ? `caixa desde ${formatDate(account.opening_date)}` : null,
   ].filter(Boolean);
+  // Sem nada separado a linha fica como sempre; com separado, mostra livre, separado e total.
+  const reserved = reservedCents(account);
 
   return (
     <li className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3">
@@ -54,8 +57,19 @@ function AccountRow({
             <Money cents={account.balance_cents} />
           </p>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            em caixa{contributedCents !== undefined && <> · aportado <Money cents={contributedCents} /></>}
+            {reserved > 0 ? "total na conta" : "em caixa"}
+            {contributedCents !== undefined && <> · aportado <Money cents={contributedCents} /></>}
           </p>
+          {reserved > 0 && (
+            <>
+              <p className="mt-1 text-xs text-ink-2">
+                Caixa livre <Money cents={freeCents(account)} />
+              </p>
+              <p className="mt-1 inline-block rounded-field border border-dashed border-ink-3 px-2 py-1 text-xs text-ink-2">
+                Separado para comprar <Money cents={reserved} /> · ainda não investido
+              </p>
+            </>
+          )}
         </div>
       ) : (
         !account.archived && (
@@ -114,6 +128,7 @@ export function CashAccountsPage() {
   const archived = sorted.filter((a) => a.archived);
   const shown = showArchived ? sorted : active;
   const withCash = active.filter((a) => a.cash_enabled);
+  const totalReserved = withCash.reduce((sum, a) => sum + reservedCents(a), 0);
   const transferBlock = withCash.length < 2 ? "Ative o caixa de pelo menos duas contas para transferir entre elas." : null;
   const newBlock = institutions.isLoading
     ? "Carregando as instituições..."
@@ -141,7 +156,16 @@ export function CashAccountsPage() {
             <Stat
               label="Caixa nas contas"
               value={<Money cents={balance.data?.total_cents ?? 0} />}
-              hint="Dinheiro parado, ainda não investido. Fica fora do patrimônio investido e da alocação."
+              hint={
+                totalReserved > 0 ? (
+                  <>
+                    Dinheiro parado, ainda não investido. Inclui <Money cents={totalReserved} /> separados para comprar. Fica fora do patrimônio
+                    investido e da alocação.
+                  </>
+                ) : (
+                  "Dinheiro parado, ainda não investido. Fica fora do patrimônio investido e da alocação."
+                )
+              }
             />
             <Stat
               label="Capital aportado pelo caixa"

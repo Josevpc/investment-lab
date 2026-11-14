@@ -1,6 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
+import { unprotectedMoney } from "@/test/privacy";
 import type { Evolution, EvolutionSummary } from "../types";
 import { WealthTab } from "./WealthTab";
 
@@ -9,6 +10,9 @@ vi.mock("recharts", async () => {
   const actual = await vi.importActual<typeof import("recharts")>("recharts");
   return { ...actual, ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div> };
 });
+
+// O card de aportes por mês busca os próprios dados e tem teste próprio.
+vi.mock("./ContributionsByMonthCard", () => ({ ContributionsByMonthCard: () => null }));
 
 // O Intl usa espaço não separável entre "R$" e o número.
 const normalize = (text: string | null) => (text ?? "").replace(/ /g, " ");
@@ -126,5 +130,75 @@ describe("WealthTab: ativos arquivados", () => {
   it("com resgates e arquivados juntos, a dica cita os dois", () => {
     renderTab(evolution({ withdrawals_cents: 50_000, archived_out_cents: 80_000 }));
     expect(screen.getByText("Variação menos aportes, mais resgates, mais ativos arquivados")).toBeInTheDocument();
+  });
+});
+
+describe("WealthTab: dinheiro separado para comprar", () => {
+  function withSeparated(summary: Partial<EvolutionSummary> = {}): Evolution {
+    const base = evolution(summary);
+    return {
+      ...base,
+      points: [
+        { ...base.points[0], reserved_cents: 0, net_worth_cents: 1_000_000 },
+        { ...base.points[1], reserved_cents: 80_000, net_worth_cents: 1_480_000 },
+      ],
+    };
+  }
+
+  it("sem separado (ou numa API anterior), não aparece legenda, coluna nem menção à faixa", () => {
+    renderTab(evolution());
+    expect(screen.queryByText("Separado (ainda não investido)")).not.toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Separado" })).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /Gráfico de linhas do patrimônio/ }).getAttribute("aria-label")).not.toMatch(/Separado/);
+    expect(screen.getByText("Patrimônio atual")).toBeInTheDocument();
+    expect(screen.queryByText(/inclui .* separado/)).not.toBeInTheDocument();
+  });
+
+  it("com separado, a legenda traz o item hachurado escrito por extenso", () => {
+    renderTab(withSeparated());
+    const legend = screen.getByRole("list", { name: "Legenda do gráfico" });
+    expect(Array.from(legend.querySelectorAll("li")).map((li) => li.textContent)).toEqual([
+      "Patrimônio",
+      "Investido",
+      "Separado (ainda não investido)",
+    ]);
+    expect(legend.querySelector("pattern")).not.toBeNull();
+  });
+
+  it("o nome acessível do gráfico cita a faixa e não carrega valores", () => {
+    const { container } = renderTab(withSeparated());
+    const chart = screen.getByRole("img", { name: /Gráfico de linhas do patrimônio/ });
+    expect(chart).toHaveAccessibleName(/faixa hachurada "Separado \(ainda não investido\)" por cima do patrimônio/);
+    expect(container.querySelector("[aria-label*='R$']")).toBeNull();
+  });
+
+  it("o total vira Patrimônio total e diz quanto do valor está separado", () => {
+    renderTab(withSeparated({ end_total_cents: 1_480_000 }));
+    const stat = screen.getByText("Patrimônio total").closest("div")!;
+    expect(normalize(stat.textContent)).toContain("R$ 14.800,00");
+    expect(normalize(stat.textContent)).toContain("inclui R$ 800,00 separado, ainda não investido");
+  });
+
+  it("a tabela alternativa ganha a coluna Separado, com cada valor em <Money>", () => {
+    const { container } = renderTab(withSeparated());
+    const table = screen.getByRole("table", { name: /dinheiro separado/ });
+    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
+      "Data do saldo",
+      "Patrimônio",
+      "Investido",
+      "Separado",
+    ]);
+    const last = within(table).getByRole("row", { name: /30\/04\/2026/ });
+    expect(normalize(within(last).getAllByRole("cell").at(-1)!.textContent)).toBe("R$ 800,00");
+    expect(unprotectedMoney(container)).toEqual([]);
+  });
+
+  it("separado liberado vira linha de saída, com a explicação de que não é perda", () => {
+    renderTab(withSeparated({ released_cents: 20_000 }));
+    const stat = screen.getByText("Separado liberado").closest("div")!;
+    expect(normalize(stat.textContent)).toContain("− R$ 200,00");
+    expect(stat).toHaveTextContent("Voltou para o caixa livre sem comprar");
+    expect(screen.getByText("Variação menos aportes, mais separado liberado")).toBeInTheDocument();
+    expect(screen.getByText(/separados voltaram para o caixa livre/)).toHaveTextContent("não são perda");
   });
 });

@@ -73,3 +73,54 @@ class CashEntry(Base):
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime, default=dt.datetime.now, server_default=text("CURRENT_TIMESTAMP")
     )
+
+
+class CashReservation(Base):
+    """Dinheiro do caixa de uma conta separado para comprar uma categoria. Não move saldo: o
+    caixa continua sendo a soma de `cash_entry`; a reserva só marca quanto dele já tem destino.
+    O que ainda está separado é `amount_cents` menos a soma dos usos (`cash_reservation_use`)."""
+
+    __tablename__ = "cash_reservation"
+    __table_args__ = (
+        CheckConstraint("amount_cents > 0", name="ck_cash_reservation_amount"),
+        Index("ix_cash_reservation_account_class_date", "account_id", "class_id", "date"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    account_id: Mapped[int] = mapped_column(ForeignKey("account.id"))
+    class_id: Mapped[int] = mapped_column(ForeignKey("asset_class.id"))
+    date: Mapped[dt.date] = mapped_column(Date)
+    amount_cents: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=dt.datetime.now, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
+class CashReservationUse(Base):
+    """Baixa de uma reserva. Sempre positiva; o `kind` diz o que foi feito com o dinheiro:
+
+    - compra: virou ativo, e `movement_id` aponta para o aporte que o gastou;
+    - liberacao: voltou a ser caixa livre, sem movimento da carteira (`movement_id` nulo).
+    """
+
+    __tablename__ = "cash_reservation_use"
+    __table_args__ = (
+        CheckConstraint("kind IN ('compra', 'liberacao')", name="ck_cash_reservation_use_kind"),
+        CheckConstraint("amount_cents > 0", name="ck_cash_reservation_use_amount"),
+        # Liberar dinheiro não mexe na carteira: só uma compra pode apontar para um movimento.
+        CheckConstraint(
+            "movement_id IS NULL OR kind = 'compra'", name="ck_cash_reservation_use_movement"
+        ),
+        Index("ix_cash_reservation_use_reservation", "reservation_id"),
+        Index("ix_cash_reservation_use_movement", "movement_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    reservation_id: Mapped[int] = mapped_column(ForeignKey("cash_reservation.id"))
+    kind: Mapped[str] = mapped_column(String(16))
+    date: Mapped[dt.date] = mapped_column(Date)
+    amount_cents: Mapped[int] = mapped_column(Integer)
+    movement_id: Mapped[int | None] = mapped_column(ForeignKey("asset_movement.id"))
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, default=dt.datetime.now, server_default=text("CURRENT_TIMESTAMP")
+    )

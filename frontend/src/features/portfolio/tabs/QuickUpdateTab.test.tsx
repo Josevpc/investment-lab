@@ -40,6 +40,7 @@ describe("QuickUpdateTab", () => {
       institution_name: "Banco",
       quantity: null,
       balance_is_net: false,
+      tax_exempt: false,
       invested_cents: 1_000,
       current_cents: 1_100,
       valuation_date: "2026-10-17",

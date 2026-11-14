@@ -35,6 +35,7 @@ from app.features.backup.schemas import (
     OffsiteCopyResult,
     OffsiteStatus,
 )
+from app.features.portfolio.service import check_assets_tax_exempt
 from app.seed import seed
 
 APP_NAME = "investment-lab"
@@ -187,6 +188,7 @@ def restore_backup(session: Session, payload: dict[str, Any]) -> DataChangeResul
             if loaded:
                 session.execute(insert(table), loaded)
         _check_integrity(session)
+        check_assets_tax_exempt(session)  # as marcas do arquivo seguem a regra do cadastro
         session.commit()
     except InvalidInputError:
         session.rollback()

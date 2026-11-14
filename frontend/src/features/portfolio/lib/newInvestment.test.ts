@@ -22,6 +22,7 @@ function asset(extra: Partial<Asset> = {}): Asset {
     archived: false,
     hold_only: true,
     balance_is_net: false,
+    tax_exempt: false,
     purpose: null,
     asset_type: null,
     fii_segment: null,
@@ -99,6 +100,13 @@ describe("não contar como aporte", () => {
     expect(nb(uncountDone(movement))).toBe("R$ 1.000,00 de CDB Banco X não conta mais como aporte de outubro. O saldo do ativo não mudou.");
   });
 
+  it("o PUT de um ativo isento leva a marca de isento", () => {
+    expect(updateInputFrom(asset({ tax_exempt: true }), { is_new_investment: false })).toMatchObject({
+      tax_exempt: true,
+      balance_is_net: false,
+    });
+  });
+
   it("o PUT leva o cadastro inteiro, mantém a conta e muda só o pedido", () => {
     expect(updateInputFrom(asset(), { is_new_investment: false })).toEqual({
       name: "CDB Banco X",
@@ -115,6 +123,7 @@ describe("não contar como aporte", () => {
       fii_segment: null,
       hold_only: true,
       balance_is_net: false,
+      tax_exempt: false,
       archived: false,
       is_new_investment: false,
     });

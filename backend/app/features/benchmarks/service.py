@@ -12,7 +12,11 @@ from app.features.benchmarks.schemas import BenchmarkStatus, RefreshResult, Seri
 HISTORY_START = date(2010, 1, 1)
 STALE_AFTER = timedelta(hours=12)
 IBOVESPA = "ibovespa"
+USD = "usd"  # guardado em benchmark_index_level, em décimos de milésimo de real (veja o modelo)
 INDEX_SOURCE = client.INDEX_SOURCE
+IPCA = "ipca"
+IPCA_SOURCE = client.IPCA_SOURCE
+USD_SOURCE = client.USD_SOURCE
 
 
 def get_status(session: Session, *, now: datetime | None = None) -> BenchmarkStatus:
@@ -38,6 +42,11 @@ def get_status(session: Session, *, now: datetime | None = None) -> BenchmarkSta
             BenchmarkIndexLevel.series == IBOVESPA
         )
     ).one()
+    usd_days, usd_through = session.execute(
+        select(func.count(), func.max(BenchmarkIndexLevel.date)).where(
+            BenchmarkIndexLevel.series == USD
+        )
+    ).one()
     return BenchmarkStatus(
         source=client.SOURCE,
         updated_at=updated_at,
@@ -47,6 +56,8 @@ def get_status(session: Session, *, now: datetime | None = None) -> BenchmarkSta
         daily_through=daily_through.isoformat() if daily_through else None,
         index_days=index_days,
         index_through=index_through.isoformat() if index_through else None,
+        usd_days=usd_days,
+        usd_through=usd_through.isoformat() if usd_through else None,
     )
 
 
@@ -165,17 +176,20 @@ def refresh(
     fetcher: client.Fetcher | None = None,
     daily_fetcher: client.DailyFetcher | None = None,
     index_fetcher: client.DailyFetcher | None = None,
+    usd_fetcher: client.DailyFetcher | None = None,
     today: date | None = None,
 ) -> RefreshResult:
-    """Busca as taxas no Banco Central e o Ibovespa na B3 e atualiza o banco.
+    """Busca as taxas e o dólar no Banco Central e o Ibovespa na B3 e atualiza o banco.
 
     Nunca levanta por falha de rede: cada fonte tem o seu try/rollback, e uma que falha não
-    desfaz o que as outras já salvaram. Com `fetcher` injetado (testes), o CDI diário e o
-    Ibovespa só são buscados se `daily_fetcher` e `index_fetcher` também forem.
+    desfaz o que as outras já salvaram. Com `fetcher` injetado (testes), o CDI diário, o
+    Ibovespa e o dólar só são buscados se `daily_fetcher`, `index_fetcher` e `usd_fetcher`
+    também forem.
     """
     fetch = fetcher or client.fetch_series
     fetch_daily = daily_fetcher or (client.fetch_daily_cdi if fetcher is None else None)
     fetch_index = index_fetcher or (client.fetch_ibovespa if fetcher is None else None)
+    fetch_usd = usd_fetcher or (client.fetch_daily_usd if fetcher is None else None)
     end = today or date.today()
     saved = 0
     errors: list[str] = []
@@ -213,6 +227,20 @@ def refresh(
         except Exception as exc:
             session.rollback()  # desfaz só o ano que falhou; os anteriores já foram confirmados
             errors.append(f"Ibovespa: {exc}")
+    if fetch_usd is not None:
+        last_usd = session.scalar(
+            select(func.max(BenchmarkIndexLevel.date)).where(BenchmarkIndexLevel.series == USD)
+        )
+        # A PTAX é definitiva depois de publicada: recomeça no dia seguinte ao último guardado.
+        start = last_usd + timedelta(days=1) if last_usd else HISTORY_START
+        # Try próprio: uma falha do dólar não pode desfazer o CDI nem o Ibovespa já confirmados.
+        try:
+            if start <= end:
+                rows = [r for r in fetch_usd(start, end) if start <= r[0] <= end]
+                saved += _upsert_index(session, USD, rows)
+        except Exception as exc:
+            session.rollback()
+            errors.append(f"Dólar: {exc}")
     return RefreshResult(
         ok=not errors or saved > 0, rows_saved=saved, errors=errors, status=get_status(session)
     )
@@ -222,10 +250,13 @@ def refresh_if_stale(
     session: Session, *, fetcher: client.Fetcher | None = None
 ) -> RefreshResult | None:
     status = get_status(session)
-    # Em produção (sem fetcher injetado) também busca o CDI diário e o Ibovespa, se ainda não
-    # houver nenhum.
-    missing_daily = fetcher is None and (status.daily_days == 0 or status.index_days == 0)
-    if not status.stale and not missing_daily:
+    # Em produção (sem fetcher injetado) também busca o CDI diário, o Ibovespa e o dólar, se ainda
+    # não houver nenhum. Uma série mensal vazia (o IPCA, num banco de antes dele) também pede busca.
+    missing_daily = fetcher is None and (
+        status.daily_days == 0 or status.index_days == 0 or status.usd_days == 0
+    )
+    missing_monthly = any(item.months == 0 for item in status.series)
+    if not status.stale and not missing_daily and not missing_monthly:
         return None
     return refresh(session, fetcher=fetcher)
 

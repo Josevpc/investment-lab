@@ -12,6 +12,8 @@ from app.core.db import get_session, make_engine
 from app.demo import ensure_not_real_database, seed_demo
 from app.features.analytics.service import get_asset_performance
 from app.features.benchmarks.models import BenchmarkDaily
+from app.features.cash import repository as repo
+from app.features.cash.domain import Reservation, ReservationUse, balance_at, outstanding
 from app.features.history.models import Snapshot
 from app.main import create_app
 
@@ -28,7 +30,7 @@ def test_demo_seed_builds_a_complete_fictional_portfolio(client):
     assert seed_demo(session, TODAY) is True
 
     assets = client.get(f"{API}/assets").json()
-    assert len(assets) == 9
+    assert len(assets) == 10
     assert {a["institution_name"] for a in assets} == {
         "Banco Exemplo",
         "Corretora Exemplo",
@@ -88,8 +90,9 @@ def test_demo_shows_a_streak_and_goals(client, monkeypatch):
 
     progress = client.get(f"{API}/goals/progress").json()
 
-    # Seis meses fechados e aportados conforme o plano; outubro ainda está em andamento.
-    assert (progress["streak"]["current"], progress["streak"]["current_month_met"]) == (6, False)
+    # Seis meses fechados e aportados conforme o plano; outubro também já cumpriu o plano, porque o
+    # dinheiro separado para comprar conta no mês em que foi separado.
+    assert (progress["streak"]["current"], progress["streak"]["current_month_met"]) == (7, True)
     assert progress["net_worth"]["goal_cents"] > 0
     assert progress["year"]["status"] == "ok" and progress["year"]["goal_cents"] > 0
 
@@ -134,6 +137,22 @@ def test_demo_has_one_fixed_income_asset_with_a_net_balance(client):
     net = {a["name"] for a in client.get(f"{API}/assets").json() if a["balance_is_net"]}
     # Mostra, na tabela de renda fixa, o aviso de que líquido e bruto não se comparam.
     assert net == {"Conta Exemplo 120% do CDI"}
+
+
+def test_demo_has_one_exempt_lci_that_shows_the_gross_equivalent(client):
+    session = session_of(client)
+    seed_demo(session, TODAY)
+    by_name = {a["name"]: a for a in client.get(f"{API}/assets").json()}
+
+    exempt = {name for name, a in by_name.items() if a["tax_exempt"]}
+    assert exempt == {"LCI Banco Exemplo 90% CDI"}
+    lci = by_name["LCI Banco Exemplo 90% CDI"]
+    assert lci["class_key"] == "renda_fixa" and lci["balance_is_net"] is False
+
+    body = client.get(f"{API}/analytics/assets/{lci['id']}/vs-cdi").json()
+    assert abs(body["pct_of_cdi_bps"] - 9_000) <= 30  # o exemplo foi montado a 90% do CDI
+    assert abs(body["net_pct_of_cdi_bps"] - 10_588) <= 40  # equivalente bruto a 15%
+    assert body["ir_rate_bps"] == 1500
 
 
 def test_demo_has_a_fictional_ibovespa_for_the_comparison(client):
@@ -184,7 +203,7 @@ def test_demo_seed_is_idempotent(client):
     session = session_of(client)
     assert seed_demo(session, TODAY) is True
     assert seed_demo(session, TODAY) is False
-    assert len(client.get(f"{API}/assets").json()) == 9
+    assert len(client.get(f"{API}/assets").json()) == 10
 
 
 def test_system_status_reports_demo_mode_off_by_default(client):
@@ -201,8 +220,11 @@ def test_demo_has_two_new_assets_this_month_that_count_in_the_month_sums(client)
     assert new == {"CDB Novo Exemplo", "Ação Nova Exemplo"}
     assert summary["new_assets_cents"] == 35_000
     assert {item["asset_name"] for item in summary["new_assets"]} == new
-    assert summary["registered_cents"] == 12_000  # o aporte lançado na cripto
-    assert summary["total_cents"] == 47_000
+    # O aporte lançado na cripto (12.000) e a compra do ETF sem a parte paga com o separado de
+    # setembro (10.000 - 6.000), que já contou em setembro.
+    assert summary["registered_cents"] == 12_000 + 4_000
+    # Total: 47.000 de antes (cripto e ativos novos) + 4.000 da compra + 4.000 separados no mês.
+    assert summary["total_cents"] == 55_000
 
 
 # ---- trava: a demonstração nunca abre o banco real ---------------------------------------
@@ -285,3 +307,97 @@ def test_demo_has_a_redemption_from_the_reserve_with_a_note(client):
     assert redemption["note"] == "Conserto do carro (exemplo)"
     assert redemption["amount_cents"] == 50_000 and redemption["cost_cents"] > 0
     assert summary["redemptions_cents"] == 50_000
+
+
+def test_demo_has_separated_cash_with_a_purchase_a_release_and_an_open_balance(client):
+    session = session_of(client)
+    seed_demo(session, TODAY)
+
+    [account] = [a for a in client.get(f"{API}/accounts").json() if a["cash_enabled"]]
+    reservations = client.get(
+        f"{API}/accounts/{account['id']}/reservations", params={"include_closed": True}
+    ).json()
+    by_date = {r["date"]: r for r in reservations["reservations"]}
+
+    # R$ 60 separados em setembro, gastos todos na compra; R$ 40 em outubro, com R$ 10 liberados.
+    assert set(by_date) == {"2026-09-25", "2026-10-02"}
+    assert (by_date["2026-09-25"]["amount_cents"], by_date["2026-09-25"]["used_cents"]) == (
+        6_000,
+        6_000,
+    )
+    assert by_date["2026-09-25"]["remaining_cents"] == 0
+    october = by_date["2026-10-02"]
+    assert (october["amount_cents"], october["used_cents"], october["released_cents"]) == (
+        4_000,
+        0,
+        1_000,
+    )
+    assert reservations["reserved_cents"] == 3_000  # o que segue em aberto
+    assert [c["class_name"] for c in reservations["by_class"]] == ["Ações/ETF"]
+
+    # A compra de R$ 100 pagou R$ 60 com o separado e R$ 40 com o caixa livre.
+    purchase = next(
+        m for m in client.get(f"{API}/movements").json() if m["from_reserved_cents"] == 6_000
+    )
+    assert (purchase["asset_name"], purchase["amount_cents"], purchase["date"]) == (
+        "ETF Exemplo",
+        10_000,
+        "2026-10-01",
+    )
+    # Caixa: saldo inicial de R$ 500 menos a compra, mais os proventos dos dois FIIs do mês.
+    assert account["balance_cents"] == 50_000 - 10_000 + 22_500
+    assert account["reserved_cents"] == 3_000
+    assert account["free_cents"] == account["balance_cents"] - 3_000
+
+
+def test_demo_separated_cash_shows_up_in_the_plan_net_worth_and_composition(client):
+    seed_demo(session_of(client), TODAY)
+
+    september = client.get(f"{API}/portfolio/month-summary", params={"month": "2026-09"}).json()
+    october = client.get(f"{API}/portfolio/month-summary", params={"month": "2026-10"}).json()
+    etf = {
+        month: next(c for c in body["by_class"] if c["class_key"] == "acoes_etfs")
+        for month, body in (("09", september), ("10", october))
+    }
+    assert (september["reserved_cents"], etf["09"]["reserved_cents"]) == (6_000, 6_000)
+    assert (october["reserved_cents"], etf["10"]["reserved_cents"]) == (4_000, 4_000)
+    assert etf["10"]["from_reserved_cents"] == 6_000  # a compra de outubro usou o de setembro
+
+    summary = client.get(f"{API}/portfolio/summary").json()
+    assert summary["reserved_cents"] == 3_000
+    assert summary["net_worth_cents"] == summary["total_current_cents"] + 3_000
+    assert [r["reserved_cents"] for r in summary["reserved_by_class"]] == [3_000]
+
+    evolution = client.get(f"{API}/history/evolution").json()
+    separated = [p["reserved_cents"] for p in evolution["points"]]
+    assert separated[-1] == 3_000 and max(separated) >= 3_000
+    assert evolution["points"][-1]["net_worth_cents"] == summary["net_worth_cents"]
+    assert evolution["summary"]["released_cents"] == 1_000
+
+
+def test_demo_cash_rules_hold_on_every_day_of_the_generated_history(client):
+    session = session_of(client)
+    seed_demo(session, TODAY)
+
+    for account in repo.list_accounts(session):
+        entries = [(e.date, e.amount_cents) for e in repo.list_entries(session, account.id)]
+        if not entries:
+            continue
+        reservations = [
+            Reservation(r.id, r.class_id, r.date, r.amount_cents)
+            for r in repo.list_reservations(session, account.id)
+        ]
+        uses = [
+            ReservationUse(u.reservation_id, u.kind, u.date, u.amount_cents)
+            for u in repo.list_reservation_uses(session, account.id)
+        ]
+        opening = min(day for day, _ in entries)
+        days = {opening + dt.timedelta(days=n) for n in range((TODAY - opening).days + 1)}
+        for day in sorted(days):
+            cash = balance_at(entries, day)
+            separated = sum(outstanding(reservations, uses, day).values())
+            assert cash >= 0, f"{account.name}: caixa negativo em {day}"
+            assert separated <= cash, f"{account.name}: separado passa do caixa em {day}"
+        # Nada no futuro: nem lançamento, nem separação, nem baixa.
+        dates = [d for d, _ in entries] + [r.date for r in reservations] + [u.date for u in uses]
+        assert max(dates) <= TODAY

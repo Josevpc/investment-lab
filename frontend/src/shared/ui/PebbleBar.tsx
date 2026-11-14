@@ -1,5 +1,7 @@
-import type { CSSProperties } from "react";
+import { useId, type CSSProperties } from "react";
+import { SEPARATED } from "@/shared/lib/chart";
 import { cx } from "./primitives";
+import { SeparatedPattern } from "./SeparatedMark";
 
 /**
  * Barra "seixo": a única barra do produto (participação, meta, reserva). Trilho de 14px em pílula e
@@ -15,7 +17,16 @@ export function PebbleBar({
   className,
   marks,
   track,
+  separatedBps = 0,
+  valueText,
 }: {
+  /**
+   * Trecho "separado" (dinheiro guardado, ainda não investido) logo depois do valor: hachurado e com contorno tracejado.
+   * `valueBps` passa a ser só o trecho cheio; quem usa escreve os dois valores por extenso ao lado.
+   */
+  separatedBps?: number;
+  /** Texto para leitor de tela com os valores por extenso (`aria-valuetext`); só em "progressbar". */
+  valueText?: string;
   /** Cor do trilho (CSS), para barras sobre um fundo que já é `raise`. */
   track?: string;
   valueBps: number;
@@ -28,9 +39,20 @@ export function PebbleBar({
   role: "progressbar" | "img";
   className?: string;
 }) {
+  const patternId = `sep-${useId().replace(/:/g, "")}`;
   const value = Math.min(Math.max(valueBps, 0), 10_000);
+  const separated = Math.min(Math.max(separatedBps, 0), 10_000 - value);
+  // Quem lê a barra ouve a soma dos dois trechos: é o quanto da meta já está coberto.
+  const covered = value + separated;
   const progress =
-    role === "progressbar" ? { "aria-valuenow": Math.round(value / 100), "aria-valuemin": 0, "aria-valuemax": 100 } : {};
+    role === "progressbar"
+      ? {
+          "aria-valuenow": Math.round(covered / 100),
+          "aria-valuemin": 0,
+          "aria-valuemax": 100,
+          "aria-valuetext": valueText,
+        }
+      : {};
   return (
     <div
       role={role}
@@ -39,11 +61,41 @@ export function PebbleBar({
       className={cx("relative h-3.5 rounded-full bg-[var(--pebble-track,var(--raise))]", className)}
       style={track ? ({ "--pebble-track": track } as CSSProperties) : undefined}
     >
-      <div
-        data-fill
-        className="h-full rounded-full"
-        style={{ width: `${value / 100}%`, minWidth: value > 0 ? "0.875rem" : undefined, backgroundColor: color }}
-      />
+      {separated > 0 ? (
+        // Dois trechos lado a lado dentro da pílula: o cheio (comprado) e o hachurado (separado).
+        <div className="flex h-full overflow-hidden rounded-full">
+          {value > 0 && (
+            <div data-fill className="h-full shrink-0" style={{ width: `${value / 100}%`, minWidth: "0.875rem", backgroundColor: color }} />
+          )}
+          <svg
+            data-separated
+            aria-hidden
+            className="h-full min-w-3.5 shrink-0"
+            style={{ width: `${separated / 100}%` }}
+          >
+            <defs>
+              <SeparatedPattern id={patternId} />
+            </defs>
+            <rect
+              x="1"
+              y="1"
+              // Largura em CSS (calc) para o contorno caber inteiro no trecho, qualquer que seja o tamanho dele.
+              style={{ width: "calc(100% - 2px)", height: "calc(100% - 2px)" }}
+              rx="4"
+              fill={`url(#${patternId})`}
+              stroke={SEPARATED}
+              strokeWidth="1.5"
+              strokeDasharray="4 2"
+            />
+          </svg>
+        </div>
+      ) : (
+        <div
+          data-fill
+          className="h-full rounded-full"
+          style={{ width: `${value / 100}%`, minWidth: value > 0 ? "0.875rem" : undefined, backgroundColor: color }}
+        />
+      )}
       {marks?.map((mark) => (
         <span
           key={mark}
