@@ -4,15 +4,25 @@ from datetime import date
 from sqlalchemy.orm import Session
 
 from app.core.errors import ConflictError, InvalidInputError, NotFoundError
+from app.features.cash import service as cash
 from app.features.contributions.service import final_by_month
 from app.features.history import repository as repo
-from app.features.history.domain import combine_contributions
+from app.features.history.domain import (
+    MAX_MONTHS,
+    combine_contributions,
+    month_index,
+    month_name,
+    month_span,
+    parse_month,
+)
 from app.features.history.models import Snapshot, SnapshotItem
 from app.features.history.schemas import (
+    ContributionsByMonthOut,
     EvolutionClass,
     EvolutionOut,
     EvolutionPoint,
     EvolutionSummary,
+    MonthContribution,
     SnapshotClassValue,
     SnapshotCreate,
     SnapshotItemIn,
@@ -21,6 +31,7 @@ from app.features.history.schemas import (
 )
 from app.features.portfolio.movements import (
     aportes_in_period,
+    month_totals,
     new_assets_in_period,
     redemptions_in_period,
 )
@@ -211,13 +222,14 @@ def get_evolution(
         d for d in timeline.dates if (start is None or d >= start) and (end is None or d <= end)
     ]
 
+    separated = cash.reserved_by_class_on(session, days)
     used_keys = {
         timeline.assets[asset_id].class_key
         for day in days
         for asset_id, state in timeline.states[day].items()
         if state.current_cents > 0 and not timeline.assets[asset_id].is_reserve
-    }
-    # Categorias ativas sempre aparecem; as arquivadas só se tiveram valor no período.
+    } | {classes[class_id].key for by_class in separated.values() for class_id in by_class}
+    # Categorias ativas sempre aparecem; as arquivadas só se tiveram valor (ou separado) no período.
     shown = [c for c in classes.values() if not c.archived or c.key in used_keys]
 
     points = []
@@ -231,6 +243,8 @@ def get_evolution(
             elif info.class_key in by_class:
                 by_class[info.class_key] += state.current_cents
         total, invested = timeline.totals(day, lambda _asset_id: True)
+        reserved_by_class = {classes[cid].key: cents for cid, cents in separated[day].items()}
+        reserved = sum(reserved_by_class.values())
         points.append(
             EvolutionPoint(
                 date=day,
@@ -238,6 +252,9 @@ def get_evolution(
                 invested_cents=invested,
                 by_class=by_class,
                 reserve_cents=reserve,
+                reserved_cents=reserved,
+                reserved_by_class=reserved_by_class,
+                net_worth_cents=total + reserved,
             )
         )
 
@@ -255,9 +272,18 @@ def get_evolution(
         # diário" (a chave fica, mesmo zerada) para não cair no planejado e contar de novo.
         new_assets = new_assets_in_period(session, first.date, last.date)
         diary = {m: cents - new_assets.folded_by_month.get(m, 0) for m, cents in diary.items()}
+        # Dinheiro separado também é dinheiro que entrou no patrimônio: conta no mês da separação,
+        # como no plano do mês. A compra paga com ele já entrou no diário como valor do ativo, e o
+        # separado que ela gastou deixou de ser patrimônio à parte, então sai do mesmo mês para não
+        # contar duas vezes. O mês com separação passa a ter diário e não usa o planejado.
+        flows = cash.reserve_flows_in_period(session, first.date, last.date)
+        for month, cents in flows.separated_by_month.items():
+            diary[month] = diary.get(month, 0) + cents
+        for month, cents in flows.purchased_by_month.items():
+            diary[month] = diary.get(month, 0) - cents
         combined = combine_contributions(diary, planned)
         contributions = combined.cents + new_assets.invested_cents
-        change = last.total_cents - first.total_cents
+        change = last.net_worth_cents - first.net_worth_cents
         # O resgate tirou dinheiro do patrimônio sem ser perda: volta à conta da valorização.
         withdrawals = redemptions_in_period(session, first.date, last.date)
         # Arquivar um ativo com saldo, sem resgate, também tira dinheiro do patrimônio sem ser
@@ -266,13 +292,16 @@ def get_evolution(
         summary = EvolutionSummary(
             start_date=first.date,
             end_date=last.date,
-            start_total_cents=first.total_cents,
-            end_total_cents=last.total_cents,
+            start_total_cents=first.net_worth_cents,
+            end_total_cents=last.net_worth_cents,
             change_cents=change,
             contributions_cents=contributions,
             withdrawals_cents=withdrawals,
+            released_cents=flows.released_cents,
             archived_out_cents=archived_out,
-            appreciation_cents=change - contributions + withdrawals + archived_out,
+            appreciation_cents=(
+                change - contributions + withdrawals + flows.released_cents + archived_out
+            ),
             contributions_source=combined.source,
             estimated_months=combined.estimated_months,
             new_assets_cents=new_assets.invested_cents,
@@ -285,6 +314,68 @@ def get_evolution(
         ],
         points=points,
         summary=summary,
+    )
+
+
+def _checked_month(value: str | None, label: str) -> str | None:
+    if value is not None and parse_month(value) is None:
+        raise InvalidInputError(f"O mês {label} precisa estar no formato AAAA-MM, como 2026-03.")
+    return value
+
+
+def contributions_by_month(
+    session: Session, from_month: str | None, to_month: str | None, today: date
+) -> ContributionsByMonthOut:
+    """Aporte de cada mês do intervalo, para o gráfico de colunas com o planejado por cima.
+
+    Não refaz a conta: o aporte do mês é o mesmo de `get_month_summary` (dinheiro separado conta
+    no mês da separação; a compra paga com ele não conta de novo; fora da meta entra à parte; o
+    ativo marcado como novo é aporte). O saldo de ativos antigos (investido da 1ª valorização) vem
+    em coluna própria, sem somar ao aporte: não é dinheiro do mês. Resgates não abatem nada.
+    """
+    _checked_month(from_month, "inicial")
+    _checked_month(to_month, "final")
+    current = today.strftime("%Y-%m")
+    last = to_month or current
+    if from_month is not None and from_month > last:
+        raise InvalidInputError("O mês inicial não pode ser depois do mês final.")
+    if from_month is not None and month_index(last) - month_index(from_month) + 1 > MAX_MONTHS:
+        raise InvalidInputError(f"O intervalo pode ter no máximo {MAX_MONTHS} meses.")
+
+    totals = month_totals(session)
+    # Sem limite de datas: o saldo trazido e o plano são filtrados pelo intervalo aqui embaixo.
+    carried = new_assets_in_period(session, date.min, date.max).carried_by_month
+    planned = final_by_month(session, "0000-00", "9999-99")
+
+    first = from_month
+    if first is None:
+        with_data = [m for m, t in totals.items() if t.total_cents != 0]
+        with_data += [m for m, cents in carried.items() if cents > 0]
+        with_data += list(planned)
+        starts = [m for m in with_data if m <= last]
+        if not starts:
+            return ContributionsByMonthOut(
+                from_month=last, to_month=last, current_month=current, months=[]
+            )
+        # Sem `from`, a janela mais longa que cabe: quem tem mais de 10 anos de dados vê os últimos.
+        first = max(min(starts), month_name(month_index(last) - MAX_MONTHS + 1))
+
+    months = []
+    for month in month_span(first, last):
+        total = totals.get(month)
+        months.append(
+            MonthContribution(
+                month=month,
+                contributed_cents=total.total_cents if total else 0,
+                goal_cents=total.goal_cents if total else 0,
+                off_goal_cents=total.off_goal_cents if total else 0,
+                carried_in_cents=carried.get(month, 0),
+                planned_cents=planned.get(month),
+                in_progress=month == current,
+            )
+        )
+    return ContributionsByMonthOut(
+        from_month=first, to_month=last, current_month=current, months=months
     )
 
 

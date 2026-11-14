@@ -78,6 +78,7 @@ def _month_facts(session: Session, current_month: str) -> dict[str, domain.Month
         return {}
     first = min(contributions)
     # Aporte "fora da meta" não cumpre o plano do mês: a sequência só conta o que entrou na meta.
+    # É a mesma conta do plano do mês (dinheiro separado conta no mês em que foi separado).
     executed = aportes_by_month(
         session, domain.month_add(first, -1), current_month, include_off_goal=False
     )
@@ -127,6 +128,7 @@ def _year_progress(session: Session, year: int, goal: int) -> YearProgress:
     accumulated = summary.change_cents if summary else 0
     contributions = summary.contributions_cents if summary else 0
     withdrawals = summary.withdrawals_cents if summary else 0
+    released = summary.released_cents if summary else 0
     archived_out = summary.archived_out_cents if summary else 0
     return YearProgress(
         year=year,
@@ -139,9 +141,10 @@ def _year_progress(session: Session, year: int, goal: int) -> YearProgress:
         contributions_source=summary.contributions_source if summary else "diario",
         estimated_months=list(summary.estimated_months) if summary else [],
         withdrawals_cents=withdrawals,
+        released_cents=released,
         archived_out_cents=archived_out,
         new_assets_cents=summary.new_assets_cents if summary else 0,
-        appreciation_cents=accumulated - contributions + withdrawals + archived_out,
+        appreciation_cents=accumulated - contributions + withdrawals + released + archived_out,
         remaining_cents=max(0, goal - accumulated) if goal > 0 else 0,
         progress_bps=_progress_bps(accumulated, goal),
         reached=goal > 0 and accumulated >= goal,
@@ -183,7 +186,9 @@ def get_progress(session: Session) -> GoalsProgress:
     setting = _setting(session)
     today = _today()
     current_month = today.strftime("%Y-%m")
-    current = get_summary(session).total_current_cents
+    # A meta é de patrimônio, o mesmo total que a carteira mostra: inclui o dinheiro já separado
+    # para comprar (ele tem destino e deixou de ser caixa), mas não o caixa livre.
+    current = get_summary(session).net_worth_cents
     goal = setting.net_worth_goal_cents
     return GoalsProgress(
         month=current_month,
@@ -226,7 +231,7 @@ SCENARIOS = (
 def get_projection(session: Session) -> ProjectionOut:
     setting = _setting(session)
     start_month = _today().strftime("%Y-%m")
-    start = get_summary(session).total_current_cents
+    start = get_summary(session).net_worth_cents  # parte do mesmo patrimônio da meta
     monthly, source, considered = _monthly_contribution(session, setting)
     months = setting.horizon_years * 12
 

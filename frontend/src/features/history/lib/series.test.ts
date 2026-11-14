@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Evolution, EvolutionPoint } from "../types";
-import { compositionSeries, seriesShares, seriesValues } from "./series";
+import { compositionSeries, separatedTotal, seriesSeparated, seriesShares, seriesValues } from "./series";
 
 const classes: Evolution["classes"] = [
   { key: "renda_fixa", name: "Renda fixa", color: "#111", archived: false },
@@ -48,5 +48,21 @@ describe("seriesValues e seriesShares", () => {
 
   it("sem patrimônio, a participação é 0", () => {
     expect(seriesShares(point({}), compositionSeries(classes, groupOfKey, "group"))["group:7"]).toBe(0);
+  });
+});
+
+describe("dinheiro separado", () => {
+  const series = compositionSeries(classes, groupOfKey, "group");
+  const p = { ...point({ renda_fixa: 50_000, fii: 20_000, cripto: 10_000, acoes: 20_000 }), reserved_cents: 25_000, reserved_by_class: { fii: 10_000, acoes: 15_000 } };
+
+  it("soma o separado por série e no total; numa API anterior, é 0", () => {
+    expect(separatedTotal(p)).toBe(25_000);
+    expect(separatedTotal(point({}))).toBe(0);
+    expect(seriesSeparated(p, series)).toMatchObject({ renda_fixa: 0, "group:7": 25_000 });
+  });
+
+  it("a participação inclui o separado da categoria", () => {
+    // Total 100.000 + 25.000 = 125.000: o grupo tem 40.000 + 25.000 = 65.000 (52%).
+    expect(seriesShares(p, series)).toMatchObject({ renda_fixa: 4000, "group:7": 5200, cripto: 800 });
   });
 });

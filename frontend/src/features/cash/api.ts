@@ -1,5 +1,17 @@
 import { api } from "@/shared/lib/api";
-import type { Account, CashBalance, ContributedCapital, Entry, ManualKind, Reconciliation, Statement, TransferResult } from "./types";
+import type {
+  Account,
+  CashBalance,
+  ContributedCapital,
+  Entry,
+  ManualKind,
+  Reconciliation,
+  Reservation,
+  ReservationInput,
+  ReservationsOverview,
+  Statement,
+  TransferResult,
+} from "./types";
 
 const PATHS: Record<ManualKind, string> = {
   deposito: "deposits",
@@ -8,7 +20,7 @@ const PATHS: Record<ManualKind, string> = {
   ajuste: "adjustments",
 };
 
-function query(params: Record<string, string | number | undefined>): string {
+function query(params: Record<string, string | number | boolean | undefined>): string {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) if (value !== undefined) search.set(key, String(value));
   const text = search.toString();
@@ -35,4 +47,14 @@ export const cashApi = {
     api.post<TransferResult>("/cash/transfers", input),
   balance: () => api.get<CashBalance>("/cash/balance"),
   contributedCapital: (accountId?: number) => api.get<ContributedCapital>(`/cash/contributed-capital${query({ account_id: accountId })}`),
+
+  // Dinheiro separado para comprar. A resposta de criar e de liberar traz a separação e o caixa novo
+  // ({balance_cents, reserved_cents, free_cents}); a tela recarrega a conta em vez de depender do formato dela.
+  reservations: (accountId: number, includeClosed: boolean) =>
+    api.get<ReservationsOverview>(`/accounts/${accountId}/reservations${query({ include_closed: includeClosed })}`),
+  createReservation: (accountId: number, input: ReservationInput) => api.post<Reservation>(`/accounts/${accountId}/reservations`, input),
+  /** Sem `amount_cents`, libera o restante. */
+  releaseReservation: (id: number, input: { amount_cents?: number; date?: string }) =>
+    api.post<Reservation>(`/cash/reservations/${id}/release`, input),
+  deleteReservation: (id: number) => api.delete(`/cash/reservations/${id}`),
 };

@@ -232,8 +232,10 @@ def _resolve_plan(session: Session, plan_id: int | None) -> AllocationPlan:
 def split_contribution(session: Session, data: SplitIn) -> SplitOut:
     """Divide o aporte pelo plano.
 
-    Com `data.month`, o que já foi aportado nesse mês sai da carteira atual antes do cálculo: a
-    divisão parte da posição de antes dos aportes do mês, e salvar de novo não os conta duas vezes.
+    O dinheiro separado em aberto para cada categoria conta como valor dela: ele já tem destino,
+    então o aporte não o repete. Com `data.month`, o que já foi aportado nesse mês (inclusive o que
+    foi separado nele) sai da carteira atual antes do cálculo: a divisão parte da posição de antes
+    dos aportes do mês, e salvar de novo não os conta duas vezes.
     """
     plan = _resolve_plan(session, data.plan_id)
     classes = {c.id: c for c in list_asset_classes(session)}
@@ -241,7 +243,7 @@ def split_contribution(session: Session, data: SplitIn) -> SplitOut:
     hold = class_hold_status(session)
     fully_held = fully_held_ids(hold)
     effective = effective_targets(targets, fully_held)
-    current = class_current_values(session)
+    current = class_current_values(session, include_reserved=True)
     if data.month:
         already = {
             c.class_key: c.amount_cents for c in get_month_summary(session, data.month).by_class

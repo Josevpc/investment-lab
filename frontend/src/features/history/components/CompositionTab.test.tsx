@@ -108,3 +108,41 @@ describe("Histórico > Composição: por categoria ou por grupo", () => {
     expect(screen.queryByText(/O agrupamento usa o grupo atual/)).not.toBeInTheDocument();
   });
 });
+
+describe("Histórico > Composição: dinheiro separado", () => {
+  const withSeparated: Evolution = {
+    ...evolution,
+    points: [
+      evolution.points[0],
+      // FII tem R$ 300,00 separados para comprar, além dos R$ 250,00 investidos.
+      { ...evolution.points[1], by_class: { renda_fixa: 60_000, fii: 25_000, acoes: 15_000 }, reserved_cents: 30_000, reserved_by_class: { fii: 30_000 } },
+    ],
+  };
+
+  it("sem separado, não há coluna, legenda nem menção", async () => {
+    renderTab([]);
+    const values = await screen.findByRole("table", { name: /Valor de cada categoria/ });
+    expect(within(values).queryByRole("columnheader", { name: "Separado" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Separado (ainda não investido)")).not.toBeInTheDocument();
+  });
+
+  it("a tabela de valores ganha a coluna Separado e a legenda traz o item hachurado", async () => {
+    renderTab([], withSeparated);
+    const values = await screen.findByRole("table", { name: /Valor de cada categoria/ });
+    expect(within(values).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Data do saldo", "Renda fixa", "FII", "Ações/ETF", "Separado"]);
+    const sep = within(within(values).getByRole("row", { name: /30\/09\/2026/ })).getAllByRole("cell").at(-1)!;
+    expect(sep.textContent?.replace(/\s/g, " ")).toBe("R$ 300,00");
+    expect(within(within(values).getByRole("row", { name: /31\/08\/2026/ })).getAllByRole("cell").at(-1)).toHaveTextContent("R$ 0,00");
+    expect(within(screen.getByRole("list", { name: "Legenda do gráfico" })).getByText("Separado (ainda não investido)")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /faixa hachurada "Separado \(ainda não investido\)" no topo/ })).toBeInTheDocument();
+  });
+
+  it("a participação da categoria inclui o separado", async () => {
+    renderTab([], withSeparated);
+    const shares = await screen.findByRole("table", { name: /Participação percentual de cada categoria/ });
+    // Em 30/09: total 1.300 (1.000 + 300 separados). Renda fixa 600 = 46,15%, FII 250 + 300 = 42,31%, Ações 150 = 11,54%.
+    const row = within(shares).getByRole("row", { name: /30\/09\/2026/ });
+    expect(within(row).getAllByRole("cell").map((c) => c.textContent)).toEqual(["46,15%", "42,31%", "11,54%"]);
+    expect(screen.getByText(/conta na participação dela/)).toBeInTheDocument();
+  });
+});

@@ -4,7 +4,8 @@ Cada operação altera a valorização mais recente do(s) ativo(s) e deixa um re
 (`asset_movement`), que alimenta os relatórios (aportado no mês, proventos recebidos, resgatado).
 """
 
-from dataclasses import dataclass
+from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
@@ -19,8 +20,8 @@ from app.features.portfolio import repository as repo
 from app.features.portfolio.domain import redemption_effective_date
 from app.features.portfolio.models import Asset, AssetMovement, AssetValuation
 from app.features.portfolio.schemas import (
-    AssetOut,
     BalanceIn,
+    BalanceOut,
     ClassMonthAmount,
     MonthSummary,
     MovementOut,
@@ -101,15 +102,36 @@ def _contribution_date(session: Session, asset: Asset, on_date: date, given: dat
     return given
 
 
+def _spends_separated(asset: Asset, movement: AssetMovement) -> bool:
+    """A compra pode gastar o dinheiro separado da categoria?
+
+    Não quando é fora da meta (ela sai só do caixa livre, para não comer o que foi separado para o
+    plano) nem quando é da reserva de emergência (o separado é para investir, não para a reserva).
+    """
+    return not movement.off_goal and asset.purpose != "reserva"
+
+
+def _stage_purchase_consumption(session: Session, asset: Asset, movement: AssetMovement) -> int:
+    """Gasta o separado da categoria na compra, se ela pode, e devolve quanto saiu dele.
+
+    O movimento precisa de id (`flush`). Vem antes do lançamento de compra no caixa: a trava do
+    separado só aceita a compra se o separado gasto já saiu da conta.
+    """
+    if not _spends_separated(asset, movement):
+        return 0
+    return cash.stage_consume_reservations(session, asset.account_id, asset.class_id, movement)
+
+
 def _book_contribution_in_cash(
     session: Session, asset: Asset, movement: AssetMovement, use_cash: bool
-) -> None:
+) -> int | None:
     """Reflete o aporte do fechamento no caixa da conta do ativo, se ela tem caixa ativado.
 
-    Padrão: dinheiro novo, então entra um depósito e sai a compra (o caixa não muda e o capital
-    aportado sobe). Com `use_cash`, só a compra: o dinheiro já estava no caixa. Sem caixa
-    ativado, ou com aporte datado antes do saldo inicial, nada vai ao ledger (o histórico anterior
-    ao corte continua sendo o da carteira) e `use_cash` é recusado.
+    Padrão: dinheiro novo, então entra um depósito e sai a compra (o caixa não muda, o capital
+    aportado sobe e o separado não é tocado). Com `use_cash`, só a compra: o dinheiro já estava no
+    caixa, e o separado da categoria é gasto primeiro; devolve quanto saiu dele. Sem caixa ativado,
+    ou com aporte datado antes do saldo inicial, nada vai ao ledger (o histórico anterior ao corte
+    continua sendo o da carteira) e `use_cash` é recusado.
     """
     account_id = asset.account_id
     opening = cash.opening_date(session, account_id) if account_id is not None else None
@@ -120,29 +142,35 @@ def _book_contribution_in_cash(
                 "aporte não pode ser anterior ao saldo inicial"
                 + (f" ({format_date(opening)})." if opening else ".")
             )
-        return
+        return None
     session.flush()  # o movimento precisa de id para ser ligado aos lançamentos
     entries = [
         cash_domain.NewEntry(
             movement.date, cash_domain.PURCHASE, -movement.amount_cents, asset.id, movement.id
         )
     ]
-    if not use_cash:
+    from_reserved = None
+    if use_cash:
+        from_reserved = _stage_purchase_consumption(session, asset, movement)
+    else:
         deposit = cash_domain.NewEntry(
             movement.date, cash_domain.DEPOSIT, movement.amount_cents, asset.id, movement.id
         )
         entries.insert(0, deposit)
     cash.stage_entries(session, account_id, entries)
+    return from_reserved
 
 
-def record_balance(session: Session, asset_id: int, data: BalanceIn) -> AssetOut:
+def record_balance(session: Session, asset_id: int, data: BalanceIn) -> BalanceOut:
     """Fechamento do mês: grava o saldo do extrato e soma o aporte ao investido.
 
     Se a conta do ativo tem caixa ativado, o aporte também vira lançamentos no caixa (veja
-    `_book_contribution_in_cash`); tudo na mesma transação.
+    `_book_contribution_in_cash`); tudo na mesma transação. Com `use_cash`, a resposta diz quanto
+    do aporte saiu do dinheiro separado e quanto do caixa livre.
     """
     asset = _require_active_asset(session, asset_id)
     on_date = data.date or date.today()
+    from_reserved = None
     try:
         contribution_date = _contribution_date(session, asset, on_date, data.contribution_date)
         valuation = _valuation_for_change(session, asset, on_date)
@@ -163,14 +191,19 @@ def record_balance(session: Session, asset_id: int, data: BalanceIn) -> AssetOut
                 off_goal=data.off_goal,
             )
             session.add(movement)
-            _book_contribution_in_cash(session, asset, movement, data.use_cash)
+            from_reserved = _book_contribution_in_cash(session, asset, movement, data.use_cash)
         if data.invested_cents is not None:
             initial.resync(session, asset)  # o investido corrigido pode ser o da 1ª valorização
         session.commit()
     except Exception:
         session.rollback()
         raise
-    return get_asset(session, asset_id)
+    out = BalanceOut(**get_asset(session, asset_id).model_dump())
+    if from_reserved is not None:
+        out.from_reserved_cents = from_reserved
+        out.from_free_cents = data.contribution_cents - from_reserved
+        out.reserved_left_cents = cash.reserved_left(session, asset.account_id, asset.class_id)
+    return out
 
 
 def create_purchase(session: Session, data: PurchaseIn) -> PurchaseOut:
@@ -178,8 +211,9 @@ def create_purchase(session: Session, data: PurchaseIn) -> PurchaseOut:
 
     O ativo ganha o valor no investido e no saldo (como um aporte) e o caixa perde o valor. Se o
     caixa não bastar, a compra é recusada com `shortfall_cents`; `deposit_cents` grava um depósito
-    explícito antes (dinheiro novo, entra no capital aportado). Uma transação só: se algo
-    falhar, nem o movimento nem os lançamentos ficam gravados.
+    explícito antes (dinheiro novo, entra no capital aportado). O dinheiro separado para a
+    categoria é gasto primeiro e só o resto sai do caixa livre. Uma transação só: se algo falhar,
+    nem o movimento, nem as baixas do separado, nem os lançamentos ficam gravados.
     """
     asset = _require_active_asset(session, data.asset_id)
     if asset.account_id is None:
@@ -200,6 +234,7 @@ def create_purchase(session: Session, data: PurchaseIn) -> PurchaseOut:
         )
         session.add(movement)
         session.flush()
+        from_reserved = _stage_purchase_consumption(session, asset, movement)
         entries = []
         if data.deposit_cents:
             # Depósito avulso, sem ligação com o movimento: desfazer a compra devolve o dinheiro
@@ -216,10 +251,13 @@ def create_purchase(session: Session, data: PurchaseIn) -> PurchaseOut:
         session.rollback()
         raise
     return PurchaseOut(
-        movement=_movement_out(movement),
+        movement=_movement_out(movement, from_reserved),
         account_id=asset.account_id,
         deposit_cents=data.deposit_cents or 0,
         cash_balance_cents=cash.account_balance(session, asset.account_id, on_date).balance_cents,
+        from_reserved_cents=from_reserved,
+        from_free_cents=amount - from_reserved,
+        reserved_left_cents=cash.reserved_left(session, asset.account_id, asset.class_id),
     )
 
 
@@ -430,8 +468,9 @@ def _create_provento(
     return _movement_out(movement)
 
 
-def _movement_out(movement: AssetMovement) -> MovementOut:
+def _movement_out(movement: AssetMovement, from_reserved: int | None = None) -> MovementOut:
     return MovementOut(
+        from_reserved_cents=from_reserved,
         id=movement.id,
         date=movement.date,
         kind=movement.kind,
@@ -456,7 +495,8 @@ def list_movements(
     asset_id: int | None = None,
 ) -> list[MovementOut]:
     movements = repo.list_movements(session, month=month, kind=kind, asset_id=asset_id)
-    return [_movement_out(m) for m in movements]
+    spent = cash.reserved_used_by_movement(session)
+    return [_movement_out(m, spent.get(m.id, 0)) for m in movements]
 
 
 def delete_movement(session: Session, movement_id: int) -> None:
@@ -653,7 +693,8 @@ def undo_movement(session: Session, movement_id: int) -> MovementOut:
       a ser "antigo".
 
     Os lançamentos de caixa ligados ao movimento saem junto (e o desfazer é recusado se o caixa
-    ficasse negativo).
+    ficasse negativo). O dinheiro separado que a compra gastou volta a ficar em aberto, na mesma
+    separação de onde saiu.
 
     Fechamentos (snapshots) já gravados são cópias e não mudam. Tudo ocorre numa transação.
     """
@@ -663,6 +704,9 @@ def undo_movement(session: Session, movement_id: int) -> MovementOut:
     out = _movement_out(movement)
     try:
         if not movement.initial:  # o inicial nunca teve caixa nem mexeu em saldos
+            # As baixas saem antes dos lançamentos: a trava do caixa confere o resultado final
+            # (separado de volta, compra fora do extrato).
+            out.from_reserved_cents = cash.stage_release_movement_uses(session, movement.id)
             cash.stage_remove_movement_entries(session, movement.id)
             _unapply(session, movement)
         session.delete(movement)
@@ -701,6 +745,9 @@ def update_movement(session: Session, movement_id: int, data: MovementUpdate) ->
     Num resgate também dá para trocar ou apagar o motivo, e num aporte marcar ou desmarcar "fora da
     meta" (inclusive no aporte inicial); os dois só gravam o campo, sem mexer em saldo, caixa nem
     custo.
+
+    Numa compra com o caixa, corrigir valor, data ou "fora da meta" refaz o que ela gastou do
+    dinheiro separado (a resposta traz `from_reserved_cents`); se não couber, nada muda.
     """
     movement = repo.get_movement(session, movement_id)
     if movement is None:
@@ -734,34 +781,126 @@ def update_movement(session: Session, movement_id: int, data: MovementUpdate) ->
             movement.amount_cents = amount
             movement.date = on_date
             _apply(session, movement)
-            cash.stage_change_movement(session, movement.id, on_date=on_date, amount_cents=amount)
         if note_given:
             movement.note = data.note
         if off_goal_given:
             movement.off_goal = data.off_goal
+        from_reserved = None
+        if moved or off_goal_given:
+            # Valor, data e "fora da meta" mudam quanto a compra gasta do separado: apaga as baixas
+            # e refaz o consumo, antes de ajustar o caixa, para a trava ver o resultado final.
+            from_reserved = cash.stage_refresh_consumption(
+                session,
+                movement,
+                movement.asset.class_id,
+                spend=_spends_separated(movement.asset, movement),
+            )
+        if moved or from_reserved is not None:
+            cash.stage_change_movement(session, movement.id, on_date=on_date, amount_cents=amount)
         session.commit()
     except Exception:
         session.rollback()
         raise
-    return _movement_out(movement)
+    return _movement_out(movement, from_reserved)
+
+
+@dataclass
+class _MonthTally:
+    """Somas de um mês: o que o plano do mês e a sequência de metas leem.
+
+    Dinheiro separado conta no mês da separação (`reserved`, já dentro de `amount` e `goal`); a
+    parte de uma compra paga com separado de antes sai de `amount` e `goal` (`from_reserved`),
+    porque já contou no mês em que foi separada.
+    """
+
+    amount: defaultdict[int, int] = field(default_factory=lambda: defaultdict(int))
+    goal: defaultdict[int, int] = field(default_factory=lambda: defaultdict(int))
+    reserved: defaultdict[int, int] = field(default_factory=lambda: defaultdict(int))
+    from_reserved: defaultdict[int, int] = field(default_factory=lambda: defaultdict(int))
+    reserve: int = 0
+    reserve_goal: int = 0
+    off_goal: int = 0
+    proventos: int = 0
+    redemptions: int = 0
+    registered: int = 0
+    new_assets: list[NewAssetAmount] = field(default_factory=list)
+
+    @property
+    def total(self) -> int:
+        return self.reserve + sum(self.amount.values())
+
+    @property
+    def goal_total(self) -> int:
+        return self.reserve_goal + sum(self.goal.values())
+
+
+def _month_tallies(session: Session, *, month: str | None = None) -> dict[str, _MonthTally]:
+    """Soma, por mês ("YYYY-MM") e categoria, o que entrou no plano; só `month`, se informado.
+
+    Um lugar só para o plano do mês e para a sequência de metas: as duas telas nunca discordam.
+    """
+    class_ids = {c.id for c in repo.list_classes(session)}
+    spent = cash.reserved_used_by_movement(session)
+    tallies: defaultdict[str, _MonthTally] = defaultdict(_MonthTally)
+    for movement in repo.list_movements(session, month=month):
+        tally = tallies[movement.date.strftime("%Y-%m")]
+        if movement.kind == "provento":
+            tally.proventos += movement.amount_cents
+        elif movement.kind == "resgate":
+            tally.redemptions += movement.amount_cents
+        elif movement.kind == "aporte":
+            if movement.initial:
+                tally.new_assets.append(
+                    NewAssetAmount(
+                        asset_id=movement.asset_id,
+                        asset_name=movement.asset.name,
+                        amount_cents=movement.amount_cents,
+                    )
+                )
+            else:
+                tally.registered += movement.amount_cents
+            counted = 0 if movement.off_goal else movement.amount_cents
+            if movement.asset.purpose == "reserva":
+                tally.reserve += movement.amount_cents
+                tally.reserve_goal += counted
+                tally.off_goal += movement.amount_cents - counted
+            elif movement.asset.class_id in class_ids:
+                class_id = movement.asset.class_id
+                # Só a compra fora da meta e a da reserva não gastam separado (`_spends_separated`),
+                # então o que saiu do separado sempre estava dentro de `counted`.
+                paid = spent.get(movement.id, 0)
+                tally.amount[class_id] += movement.amount_cents - paid
+                tally.goal[class_id] += counted - paid
+                tally.from_reserved[class_id] += paid
+                tally.registered -= paid
+                tally.off_goal += movement.amount_cents - counted
+    for separated_month, by_class in cash.separated_by_month(session).items():
+        if month is not None and separated_month != month:
+            continue
+        for class_id, cents in by_class.items():
+            if class_id in class_ids:
+                tally = tallies[separated_month]
+                tally.amount[class_id] += cents
+                tally.goal[class_id] += cents
+                tally.reserved[class_id] += cents
+    return tallies
 
 
 def aportes_by_month(
     session: Session, after_month: str, up_to_month: str, *, include_off_goal: bool = True
 ) -> dict[str, int]:
-    """Aportes lançados nos ativos, somados por mês, no intervalo (after_month, up_to_month].
+    """Aportes do plano do mês, somados por mês, no intervalo (after_month, up_to_month].
 
-    Com `include_off_goal=False`, os aportes marcados "fora da meta" ficam de fora: é a conta da
-    sequência de meses cumpridos e do ritmo de aporte.
+    É o mesmo cálculo de `get_month_summary` (`_month_tallies`): o dinheiro separado conta no mês
+    em que foi separado, e a compra paga com ele não conta de novo. Com `include_off_goal=False`,
+    os aportes marcados "fora da meta" ficam de fora: é a conta da sequência de meses cumpridos e
+    do ritmo de aporte.
     """
-    totals: dict[str, int] = {}
-    for movement in repo.list_movements(session, kind="aporte"):
-        if movement.off_goal and not include_off_goal:
-            continue
-        month = movement.date.strftime("%Y-%m")
-        if after_month < month <= up_to_month:
-            totals[month] = totals.get(month, 0) + movement.amount_cents
-    return totals
+    return {
+        month: tally.total if include_off_goal else tally.goal_total
+        for month, tally in _month_tallies(session).items()
+        if after_month < month <= up_to_month
+    }
 
 
 def _observed_dates(session: Session) -> dict[int, list[date]]:
@@ -832,6 +971,10 @@ class NewAssets:
     # Aportes do diário (dentro do período) já contidos nesse investido, por mês: quem soma o
     # diário os descontaria para não contar o mesmo dinheiro duas vezes.
     folded_by_month: dict[str, int]
+    # O mesmo investido, no mês da 1ª valorização de cada ativo e SEM o que o diário já tem desse
+    # ativo (os aportes comuns até a data): quem mostra o diário e o saldo trazido lado a lado soma
+    # as duas colunas sem repetir dinheiro.
+    carried_by_month: dict[str, int] = field(default_factory=dict)
 
 
 def new_assets_in_period(session: Session, after: date, up_to: date) -> NewAssets:
@@ -853,6 +996,7 @@ def new_assets_in_period(session: Session, after: date, up_to: date) -> NewAsset
     redemptions = repo.list_movements(session, kind="resgate")
     invested = 0
     folded: dict[str, int] = {}
+    carried: dict[str, int] = {}
     with_initial = repo.initial_movements_by_asset(session)
     for first in repo.list_first_valuations(session):
         if not after < first.date <= up_to or first.asset_id in with_initial:
@@ -871,75 +1015,83 @@ def new_assets_in_period(session: Session, after: date, up_to: date) -> NewAsset
             for m in redemptions
             if m.asset_id == first.asset_id and m.date <= first.date
         )
-        invested += max(0, first.invested_cents - received + sent)
+        own = max(0, first.invested_cents - received + sent)
+        invested += own
+        in_diary = 0
         for movement in aportes:
             # Mesmo o aporte datado antes do período: o saldo do ativo novo o mostra no cadastro
             # (`aportes_in_period` o conta ali), então sai do diário junto com o investido.
             if movement.asset_id == first.asset_id and movement.date <= first.date:
                 month = movement.date.strftime("%Y-%m")
                 folded[month] = folded.get(month, 0) + movement.amount_cents
-    return NewAssets(invested_cents=invested, folded_by_month=folded)
+                in_diary += movement.amount_cents
+        first_month = first.date.strftime("%Y-%m")
+        carried[first_month] = carried.get(first_month, 0) + max(0, own - in_diary)
+    return NewAssets(invested_cents=invested, folded_by_month=folded, carried_by_month=carried)
+
+
+@dataclass(frozen=True)
+class MonthTotals:
+    """O aporte de um mês, dividido entre o que conta na meta e o que ficou fora dela."""
+
+    total_cents: int
+    goal_cents: int
+    off_goal_cents: int
+
+
+def month_totals(session: Session) -> dict[str, MonthTotals]:
+    """Aporte de cada mês que teve movimento ou dinheiro separado (`get_month_summary`, em lote).
+
+    `total_cents` é o mesmo da tela do mês; `goal_cents + off_goal_cents == total_cents`.
+    """
+    return {
+        month: MonthTotals(
+            total_cents=tally.total,
+            goal_cents=tally.goal_total,
+            off_goal_cents=tally.off_goal,
+        )
+        for month, tally in _month_tallies(session).items()
+    }
 
 
 def get_month_summary(session: Session, month: str) -> MonthSummary:
     """Quanto já foi aportado no mês, por categoria e na reserva (para comparar com o plano).
 
-    Inclui o aporte inicial dos ativos novos; `registered_cents` e `new_assets_cents` separam o
-    que foi lançado do que entrou com o cadastro, e os dois somam `total_cents`.
+    Inclui o aporte inicial dos ativos novos; `registered_cents`, `new_assets_cents` e
+    `reserved_cents` separam o que foi lançado, o que entrou com o cadastro e o que foi separado
+    para comprar, e os três somam `total_cents`.
+
+    O dinheiro separado conta na meta da categoria no mês em que foi separado; a compra paga com
+    ele não conta de novo no mês da compra (`from_reserved_cents`, só informativo).
 
     Os aportes "fora da meta" contam em tudo isso (a carteira os tem, e `split_contribution`
     desconta `by_class` dela); `goal_cents`, `reserve_goal_cents` e `off_goal_cents` separam a
     parte que conta no plano do mês: total = reserva na meta + categorias na meta + fora da meta.
     """
-    classes = {c.id: c for c in repo.list_classes(session)}
-    by_class = {cid: 0 for cid in classes}
-    goal_by_class = {cid: 0 for cid in classes}
-    reserve = reserve_goal = off_goal = proventos = registered = redemptions = 0
-    new_assets: list[NewAssetAmount] = []
-    for movement in repo.list_movements(session, month=month):
-        if movement.kind == "provento":
-            proventos += movement.amount_cents
-        elif movement.kind == "resgate":
-            redemptions += movement.amount_cents
-        elif movement.kind == "aporte":
-            if movement.initial:
-                new_assets.append(
-                    NewAssetAmount(
-                        asset_id=movement.asset_id,
-                        asset_name=movement.asset.name,
-                        amount_cents=movement.amount_cents,
-                    )
-                )
-            else:
-                registered += movement.amount_cents
-            counted = 0 if movement.off_goal else movement.amount_cents
-            if movement.asset.purpose == "reserva":
-                reserve += movement.amount_cents
-                reserve_goal += counted
-                off_goal += movement.amount_cents - counted
-            elif movement.asset.class_id in by_class:
-                by_class[movement.asset.class_id] += movement.amount_cents
-                goal_by_class[movement.asset.class_id] += counted
-                off_goal += movement.amount_cents - counted
+    classes = repo.list_classes(session)
+    tally = _month_tallies(session, month=month).get(month, _MonthTally())
     return MonthSummary(
         month=month,
         by_class=[
             ClassMonthAmount(
-                class_key=classes[cid].key,
-                class_name=classes[cid].name,
-                color=classes[cid].color,
-                amount_cents=amount,
-                goal_cents=goal_by_class[cid],
+                class_key=c.key,
+                class_name=c.name,
+                color=c.color,
+                amount_cents=tally.amount[c.id],
+                goal_cents=tally.goal[c.id],
+                reserved_cents=tally.reserved[c.id],
+                from_reserved_cents=tally.from_reserved[c.id],
             )
-            for cid, amount in by_class.items()
+            for c in classes
         ],
-        reserve_cents=reserve,
-        reserve_goal_cents=reserve_goal,
-        off_goal_cents=off_goal,
-        total_cents=reserve + sum(by_class.values()),
-        registered_cents=registered,
-        new_assets_cents=sum(item.amount_cents for item in new_assets),
-        new_assets=new_assets,
-        proventos_cents=proventos,
-        redemptions_cents=redemptions,
+        reserve_cents=tally.reserve,
+        reserve_goal_cents=tally.reserve_goal,
+        off_goal_cents=tally.off_goal,
+        total_cents=tally.total,
+        registered_cents=tally.registered,
+        new_assets_cents=sum(item.amount_cents for item in tally.new_assets),
+        new_assets=tally.new_assets,
+        reserved_cents=sum(tally.reserved.values()),
+        proventos_cents=tally.proventos,
+        redemptions_cents=tally.redemptions,
     )

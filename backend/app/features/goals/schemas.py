@@ -62,12 +62,15 @@ class YearProgress(BaseModel):
     # Resgates do período (>= 0). Já estão descontados em `accumulated_cents`; voltam à conta da
     # valorização para o dinheiro que saiu não parecer perda.
     withdrawals_cents: int = 0
+    # Dinheiro separado para comprar que voltou ao caixa livre no ano (>= 0): saída, não prejuízo.
+    released_cents: int = 0
     # Saldo de ativos arquivados que deixou de somar no ano (>= 0): saída, não prejuízo.
     archived_out_cents: int = 0
     # Valor inicial (>= 0) de ativos antigos trazidos para o app no ano. Já está contido em
     # `contributions_cents`; aparece à parte só para a tela explicar de onde veio o aporte.
     new_assets_cents: int = 0
-    # accumulated_cents - contributions_cents + withdrawals_cents + archived_out_cents
+    # accumulated_cents - contributions_cents + withdrawals_cents + released_cents
+    # + archived_out_cents
     appreciation_cents: int
     remaining_cents: int
     progress_bps: int

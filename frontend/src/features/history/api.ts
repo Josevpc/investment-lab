@@ -1,5 +1,5 @@
 import { api } from "@/shared/lib/api";
-import type { Evolution, Snapshot, SnapshotItemInput } from "./types";
+import type { ContributionsByMonth, Evolution, Snapshot, SnapshotItemInput } from "./types";
 
 export const historyApi = {
   snapshots: () => api.get<Snapshot[]>("/snapshots"),
@@ -22,4 +22,12 @@ export const historyApi = {
     }),
   deleteSnapshot: (id: number) => api.delete(`/snapshots/${id}`),
   evolution: (from?: string) => api.get<Evolution>(`/history/evolution${from ? `?from=${from}` : ""}`),
+  /** `from` e `to` em "YYYY-MM"; sem `from`, a API escolhe o início pelos dados. */
+  contributionsByMonth: (from?: string, to?: string) => {
+    const query = new URLSearchParams();
+    if (from) query.set("from", from);
+    if (to) query.set("to", to);
+    const text = query.toString();
+    return api.get<ContributionsByMonth>(`/history/contributions-by-month${text ? `?${text}` : ""}`);
+  },
 };

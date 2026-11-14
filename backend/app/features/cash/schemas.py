@@ -47,6 +47,8 @@ class AccountOut(BaseModel):
     cash_enabled: bool  # tem saldo inicial: o caixa da conta está ativado
     opening_date: dt.date | None
     balance_cents: int  # saldo de hoje (0 se o caixa não está ativado)
+    reserved_cents: int  # parte do saldo separada para comprar uma categoria
+    free_cents: int  # balance_cents - reserved_cents: o que ainda não tem destino
 
 
 class OpeningBalanceIn(BaseModel):
@@ -117,6 +119,8 @@ class AccountBalance(BaseModel):
     archived: bool
     cash_enabled: bool
     balance_cents: int
+    reserved_cents: int
+    free_cents: int
 
 
 class CashBalanceOut(BaseModel):
@@ -152,3 +156,54 @@ class ContributedCapitalOut(BaseModel):
     withdrawals_cents: int
     contributed_cents: int  # depósitos - retiradas
     by_account: list[AccountCapital]
+
+
+# ---- dinheiro separado para comprar ----------------------------------------------------------
+
+
+class ReservationIn(BaseModel):
+    class_id: int
+    amount_cents: int = Field(gt=0, le=MAX_CENTS)
+    date: dt.date | None = None  # omitida: hoje
+    # Dinheiro novo: grava antes um depósito avulso do mesmo valor e separa em seguida.
+    deposit: bool = False
+
+
+class ReleaseIn(BaseModel):
+    amount_cents: int | None = Field(default=None, gt=0, le=MAX_CENTS)  # omitido: todo o restante
+    date: dt.date | None = None
+
+
+class ReservationOut(BaseModel):
+    id: int
+    account_id: int
+    class_id: int
+    class_name: str
+    date: dt.date
+    amount_cents: int
+    used_cents: int  # já virou ativo (compras)
+    released_cents: int  # voltou ao caixa livre
+    remaining_cents: int  # amount - used - released
+    deletable: bool  # sem uso nem liberação: pode ser excluída (correção de digitação)
+
+
+class ReservationResult(ReservationOut):
+    """A separação depois da operação, mais o caixa novo da conta (o saldo não muda ao separar)."""
+
+    balance_cents: int
+    reserved_cents: int
+    free_cents: int
+
+
+class ClassReserved(BaseModel):
+    class_id: int
+    class_name: str
+    color: str
+    remaining_cents: int
+
+
+class ReservationsOut(BaseModel):
+    reserved_cents: int
+    free_cents: int
+    by_class: list[ClassReserved]
+    reservations: list[ReservationOut]  # da mais antiga à mais nova (ordem de consumo)

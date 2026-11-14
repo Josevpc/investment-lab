@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addQuantities, parseQuantity, valueFromQuote } from "./quote";
+import { addQuantities, parseQuantity, pricePerUnit, valueFromQuote } from "./quote";
 
 describe("valueFromQuote", () => {
   it("multiplica quantidade por cotação", () => {
@@ -56,5 +56,31 @@ describe("addQuantities", () => {
   it("devolve null para quantidade inválida", () => {
     expect(addQuantities("abc", "1")).toBeNull();
     expect(addQuantities("1", "0")).toBeNull();
+  });
+});
+
+describe("pricePerUnit", () => {
+  it("divide o valor pela quantidade de cotas", () => {
+    expect(pricePerUnit(123_400, "10")).toBe(12_340); // R$ 1.234,00 em 10 cotas = R$ 123,40 por cota
+    expect(pricePerUnit(10_000, "4")).toBe(2_500);
+  });
+
+  it("arredonda meio para cima no centavo", () => {
+    expect(pricePerUnit(100, "3")).toBe(33); // 33,33...
+    expect(pricePerUnit(101, "2")).toBe(51); // 50,5 sobe
+    expect(pricePerUnit(1, "2")).toBe(1); // 0,5 sobe
+  });
+
+  it("aceita cota fracionada", () => {
+    expect(pricePerUnit(5_000, "0,5")).toBe(10_000);
+    expect(pricePerUnit(1_000, "2.5")).toBe(400);
+  });
+
+  it("devolve null para valor ou quantidade inválidos", () => {
+    expect(pricePerUnit(null, "10")).toBeNull();
+    expect(pricePerUnit(0, "10")).toBeNull();
+    expect(pricePerUnit(1_000, "")).toBeNull();
+    expect(pricePerUnit(1_000, "0")).toBeNull();
+    expect(pricePerUnit(1_000, "abc")).toBeNull();
   });
 });

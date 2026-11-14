@@ -97,6 +97,14 @@ export function usePreferences(): Preferences {
   return context;
 }
 
+/**
+ * Valores ocultos? Para textos que o CSS não alcança (nome acessível, `aria-valuetext`), que leem o valor
+ * mesmo desfocado. Fora do provider vale `false`, para componentes que também aparecem em telas sem preferências.
+ */
+export function useHiddenValues(): boolean {
+  return useContext(PreferencesContext)?.hidden ?? false;
+}
+
 /** Tema efetivo (resolvendo "system") para quem precisa pintar gráficos. */
 export function useIsDark(): boolean {
   const { theme } = usePreferences();

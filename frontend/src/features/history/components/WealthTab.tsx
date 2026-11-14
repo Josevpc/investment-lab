@@ -1,12 +1,15 @@
 import { Link } from "react-router-dom";
-import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { legendText } from "@/shared/lib/chartLegend";
-import { AXIS, GOLD, GRID, MUTED, tooltipStyle } from "@/shared/lib/chart";
+import { Area, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { AXIS, GOLD, GRID, MUTED, SEPARATED, SEPARATED_LABEL } from "@/shared/lib/chart";
 import { contributionsHint, estimatedContributionsText, isEstimated } from "@/shared/lib/estimate";
-import { formatBRL, formatBRLCompact, formatDate, formatTickDate } from "@/shared/lib/format";
+import { formatBRLCompact, formatDate, formatTickDate } from "@/shared/lib/format";
 import { Card, Empty, ErrorBox, Loading, Money, NewAssetsNote, Notice, Stat } from "@/shared/ui";
+import { ChartLegend, LegendLine } from "@/shared/ui/ChartLegend";
+import { SEPARATED_PATTERN_ID, SeparatedPattern, separatedDot, SeparatedSwatch } from "@/shared/ui/SeparatedMark";
+import { WealthTooltip, type WealthTooltipRow } from "@/shared/ui/WealthTooltip";
 import { rangeLabel, type RangeKey } from "../lib/range";
 import type { Evolution } from "../types";
+import { ContributionsByMonthCard } from "./ContributionsByMonthCard";
 
 interface Props {
   range: RangeKey;
@@ -17,17 +20,31 @@ interface Props {
 
 /** Patrimônio em reais, separando o que entrou (aportes) do que valorizou. */
 export function WealthTab({ range, data, loading, error }: Props) {
-  const points = (data?.points ?? []).map((p) => ({
-    date: p.date,
-    Patrimônio: p.total_cents,
-    Investido: p.invested_cents,
-    Reserva: p.reserve_cents,
-  }));
+  // `separated` é o dinheiro separado para comprar (fora de `total`); numa API anterior a ele fica 0 e nada extra aparece.
+  const points = (data?.points ?? []).map((p) => {
+    const separated = p.reserved_cents ?? 0;
+    return {
+      date: p.date,
+      Patrimônio: p.total_cents,
+      Investido: p.invested_cents,
+      Reserva: p.reserve_cents,
+      total: p.total_cents,
+      invested: p.invested_cents,
+      separated,
+      // Faixa do patrimônio até o patrimônio mais o separado, por cima da linha. Em intervalo (e não empilhada),
+      // para o eixo não ser puxado para o zero por uma base transparente.
+      band: [p.total_cents, p.total_cents + separated],
+    };
+  });
   const summary = data?.summary;
   const hasReserve = points.some((p) => p.Reserva > 0);
+  const hasSeparated = points.some((p) => p.separated > 0);
+  const separatedNow = points.length > 0 ? points[points.length - 1].separated : 0;
   const estimated = summary ? isEstimated(summary) : false;
   const archivedOut = summary?.archived_out_cents ?? 0;
-  const statCount = 4 + (summary && summary.withdrawals_cents > 0 ? 1 : 0) + (archivedOut > 0 ? 1 : 0);
+  const released = summary?.released_cents ?? 0;
+  const statCount =
+    4 + (summary && summary.withdrawals_cents > 0 ? 1 : 0) + (archivedOut > 0 ? 1 : 0) + (released > 0 ? 1 : 0);
 
   return (
     <div id="panel-patrimonio" role="tabpanel" aria-labelledby="tab-patrimonio">
@@ -59,6 +76,17 @@ export function WealthTab({ range, data, loading, error }: Props) {
                 hint="Dinheiro que saiu da carteira para uso"
               />
             )}
+            {released > 0 && (
+              <Stat
+                label="Separado liberado"
+                value={
+                  <>
+                    − <Money cents={released} />
+                  </>
+                }
+                hint="Voltou para o caixa livre sem comprar"
+              />
+            )}
             {archivedOut > 0 && (
               <Stat
                 label="Ativos arquivados"
@@ -77,11 +105,24 @@ export function WealthTab({ range, data, loading, error }: Props) {
               hint={
                 "Variação menos aportes" +
                 (summary.withdrawals_cents > 0 ? ", mais resgates" : "") +
+                (released > 0 ? ", mais separado liberado" : "") +
                 (archivedOut > 0 ? ", mais ativos arquivados" : "") +
                 (estimated ? " (estimada)" : "")
               }
             />
-            <Stat label="Patrimônio atual" value={<Money cents={summary.end_total_cents} />} hint={`em ${formatDate(summary.end_date)}`} />
+            <Stat
+              label={separatedNow > 0 ? "Patrimônio total" : "Patrimônio atual"}
+              value={<Money cents={summary.end_total_cents} />}
+              hint={
+                separatedNow > 0 ? (
+                  <>
+                    em {formatDate(summary.end_date)}, inclui <Money cents={separatedNow} /> separado, ainda não investido
+                  </>
+                ) : (
+                  `em ${formatDate(summary.end_date)}`
+                )
+              }
+            />
           </div>
         )}
 
@@ -89,6 +130,13 @@ export function WealthTab({ range, data, loading, error }: Props) {
           <p className="-mt-2 mb-6 text-sm text-slate-600 dark:text-slate-300">
             Neste período, <Money cents={summary.withdrawals_cents} /> foram resgatados. Eles reduzem a variação do patrimônio, mas não são
             perda: a valorização soma esse valor de volta.
+          </p>
+        )}
+
+        {released > 0 && (
+          <p className="-mt-2 mb-6 text-sm text-slate-600 dark:text-slate-300">
+            <Money cents={released} /> separados voltaram para o caixa livre sem virar compra. Eles reduzem a variação do patrimônio, mas
+            não são perda: a valorização soma esse valor de volta.
           </p>
         )}
 
@@ -123,38 +171,81 @@ export function WealthTab({ range, data, loading, error }: Props) {
 
         {points.length >= 2 && (
           <>
-            <div className="h-80">
+            <div
+              role="img"
+              aria-label={`Gráfico de linhas do patrimônio e do valor investido${
+                hasSeparated ? `, com a faixa hachurada "${SEPARATED_LABEL}" por cima do patrimônio nas datas em que há dinheiro separado` : ""
+              }, em cada data de saldo. Os valores estão na tabela logo abaixo.`}
+              className="h-80"
+            >
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={points} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
+                <ComposedChart data={points} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
+                  {hasSeparated && (
+                    <defs>
+                      <SeparatedPattern />
+                    </defs>
+                  )}
                   <CartesianGrid stroke={GRID} vertical={false} />
                   <XAxis dataKey="date" tickFormatter={formatTickDate} stroke={AXIS} fontSize={13} />
                   <YAxis tickFormatter={formatBRLCompact} stroke={AXIS} fontSize={13} width={72} />
                   <Tooltip
-                    contentStyle={tooltipStyle}
-                    labelFormatter={(label) => formatDate(String(label))}
-                    formatter={(value) => formatBRL(Number(value))}
+                    content={(props) => (
+                      <WealthTooltip active={props.active} payload={props.payload as unknown as readonly { payload?: WealthTooltipRow }[]} />
+                    )}
                   />
-                  <Legend formatter={legendText} />
+                  {hasSeparated && (
+                    <Area
+                      isAnimationActive={false}
+                      type="monotone"
+                      dataKey="band"
+                      name={SEPARATED_LABEL}
+                      stroke={SEPARATED}
+                      strokeWidth={2}
+                      strokeDasharray="5 3"
+                      fill={`url(#${SEPARATED_PATTERN_ID})`}
+                      fillOpacity={1}
+                      dot={separatedDot}
+                      activeDot={false}
+                      legendType="none"
+                    />
+                  )}
                   <Line isAnimationActive={false} type="monotone" dataKey="Patrimônio" stroke={GOLD} strokeWidth={3} dot={{ r: 3 }} />
                   <Line isAnimationActive={false} type="monotone" dataKey="Investido" stroke={MUTED} strokeWidth={2} strokeDasharray="6 4" dot={false} />
-                </LineChart>
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
+            <ChartLegend
+              items={[
+                { key: "patrimonio", label: "Patrimônio", swatch: <LegendLine color={GOLD} /> },
+                { key: "investido", label: "Investido", swatch: <LegendLine color={MUTED} dash="6 4" width={2} /> },
+                ...(hasSeparated ? [{ key: "separado", label: SEPARATED_LABEL, swatch: <SeparatedSwatch /> }] : []),
+              ]}
+            />
             <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
               Linha cheia: patrimônio (valor atual). Tracejada: valor investido (o que entrou). A distância entre as duas é a valorização.
+              {hasSeparated &&
+                " A faixa hachurada, com contorno tracejado, é o dinheiro separado para comprar: fica por cima do patrimônio e não conta como valorização."}
             </p>
 
             <details className="mt-4">
               <summary className="cursor-pointer text-sm font-medium text-blue-700 dark:text-blue-300">Ver os mesmos dados em tabela</summary>
-              <div className="relative mt-3 overflow-x-auto" role="region" aria-label="Patrimônio, investido e reserva por data de saldo" tabIndex={0}>
+              <div
+                className="relative mt-3 overflow-x-auto"
+                role="region"
+                aria-label={`Patrimônio, investido${hasSeparated ? ", separado" : ""} e reserva por data de saldo`}
+                tabIndex={0}
+              >
                 <table className="w-full text-sm">
-                  <caption className="sr-only">Patrimônio, valor investido e reserva em cada data de atualização de saldo</caption>
+                  <caption className="sr-only">
+                    Patrimônio, valor investido{hasSeparated ? ", dinheiro separado" : ""} e reserva em cada data de atualização de saldo
+                  </caption>
                   <thead className="text-left text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
                     <tr>
                       <th scope="col" className="pb-2 font-medium">Data do saldo</th>
                       <th scope="col" className="pb-2 pl-3 text-right font-medium">Patrimônio</th>
                       <th scope="col" className="pb-2 pl-3 text-right font-medium">Investido</th>
                       {hasReserve && <th scope="col" className="pb-2 pl-3 text-right font-medium">Reserva (inclusa)</th>}
+                      {hasSeparated && <th scope="col" className="pb-2 pl-3 text-right font-medium">Separado</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -164,6 +255,7 @@ export function WealthTab({ range, data, loading, error }: Props) {
                         <td className="tabular whitespace-nowrap py-2 pl-3 text-right font-semibold"><Money cents={p.Patrimônio} /></td>
                         <td className="tabular whitespace-nowrap py-2 pl-3 text-right"><Money cents={p.Investido} /></td>
                         {hasReserve && <td className="tabular whitespace-nowrap py-2 pl-3 text-right"><Money cents={p.Reserva} /></td>}
+                        {hasSeparated && <td className="tabular whitespace-nowrap py-2 pl-3 text-right"><Money cents={p.separated} /></td>}
                       </tr>
                     ))}
                   </tbody>
@@ -173,6 +265,10 @@ export function WealthTab({ range, data, loading, error }: Props) {
           </>
         )}
       </Card>
+
+      <div className="mt-6">
+        <ContributionsByMonthCard range={range} />
+      </div>
     </div>
   );
 }

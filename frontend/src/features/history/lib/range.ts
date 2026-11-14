@@ -20,3 +20,19 @@ export function rangeStart(range: RangeKey, now = new Date()): string | undefine
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`;
 }
+
+/** "2026-10" + n meses (n pode ser negativo), por aritmética de mês: sem Date, sem fuso. */
+export function addMonths(month: string, delta: number): string {
+  const [year, m] = month.split("-").map(Number);
+  const index = year * 12 + (m - 1) + delta;
+  return `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, "0")}`;
+}
+
+/**
+ * Primeiro mês ("YYYY-MM") do filtro de período, ou undefined para "tudo". Conta o mês atual: "Últimos 12 meses" são
+ * 12 colunas, do mês atual para trás, e não 13.
+ */
+export function rangeFromMonth(range: RangeKey, thisMonth: string): string | undefined {
+  if (range === "all") return undefined;
+  return addMonths(thisMonth, 1 - MONTHS_BACK[range]);
+}

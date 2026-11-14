@@ -9,15 +9,18 @@ import { MoneyText } from "@/shared/ui/MoneyText";
 import { AccountSettings } from "./components/AccountSettings";
 import { ActivateCashForm } from "./components/ActivateCashForm";
 import { EntryForm } from "./components/EntryForm";
-import { CashError } from "./components/parts";
+import { CashError, SeparatedStat } from "./components/parts";
 import { PurchaseForm } from "./components/PurchaseForm";
 import { ReconcileForm } from "./components/ReconcileForm";
+import { ReservationsCard } from "./components/ReservationsCard";
+import { ReserveForm } from "./components/ReserveForm";
 import { StatementCard } from "./components/StatementCard";
 import { TransferForm } from "./components/TransferForm";
 import { useAccount, useAccounts, useContributedCapital } from "./hooks";
 import type { EntryNames } from "./lib/entries";
+import { freeCents, reservedCents } from "./lib/split";
 
-type Mode = "entry" | "reconcile" | "purchase" | "transfer";
+type Mode = "entry" | "reconcile" | "purchase" | "reserve" | "transfer";
 
 function BackLink() {
   return (
@@ -83,6 +86,8 @@ export function CashAccountPage() {
   const otherWithCash = (accounts.data ?? []).filter((acc) => acc.id !== a.id && acc.cash_enabled && !acc.archived);
   const canAct = a.cash_enabled && !a.archived;
   const myCapital = a.cash_enabled ? capital.data : undefined;
+  // Sem nada separado, o caixa aparece como sempre: um valor só, sem os dois extras.
+  const hasReserved = reservedCents(a) > 0;
 
   const purchaseBlock = allAssets.error
     ? "Não deu para carregar os ativos desta conta; recarregue a página para comprar."
@@ -124,7 +129,15 @@ export function CashAccountPage() {
 
         {a.cash_enabled && (
           <div className="mt-5 grid grid-cols-1 gap-6 sm:grid-cols-3">
-            <Stat label="Caixa hoje" value={<Money cents={a.balance_cents} />} hint="Dinheiro parado nesta conta, ainda não investido." />
+            {hasReserved ? (
+              <>
+                <Stat label="Caixa livre" value={<Money cents={freeCents(a)} />} hint="Sem destino: pode ser retirado, transferido ou usado em qualquer compra." />
+                <SeparatedStat cents={reservedCents(a)} />
+                <Stat label="Total na conta" value={<Money cents={a.balance_cents} />} hint="Livre + separado. É o que o extrato do banco mostra." />
+              </>
+            ) : (
+              <Stat label="Caixa hoje" value={<Money cents={a.balance_cents} />} hint="Dinheiro parado nesta conta, ainda não investido." />
+            )}
             <Stat
               label="Capital aportado nesta conta"
               value={myCapital ? <Money cents={myCapital.contributed_cents} /> : "—"}
@@ -174,6 +187,9 @@ export function CashAccountPage() {
             >
               Comprar ativo com o caixa
             </Button>
+            <Button ref={(el) => void (buttons.current.reserve = el)} variant="secondary" className="min-h-10" onClick={() => open("reserve")}>
+              Separar para comprar
+            </Button>
             <Button
               ref={(el) => void (buttons.current.transfer = el)}
               variant="secondary"
@@ -198,6 +214,9 @@ export function CashAccountPage() {
       {mode === "purchase" && (
         <PurchaseForm account={a} assets={myAssets} onDone={(m) => close("purchase", m)} onCancel={() => close("purchase")} />
       )}
+      {mode === "reserve" && (
+        <ReserveForm account={a} assets={allAssets.data ?? []} onDone={(m) => close("reserve", m)} onCancel={() => close("reserve")} />
+      )}
       {mode === "transfer" && (
         <TransferForm accounts={accounts.data ?? []} fromId={a.id} onDone={(m) => close("transfer", m)} onCancel={() => close("transfer")} />
       )}
@@ -215,6 +234,8 @@ export function CashAccountPage() {
           </div>
         )}
       </div>
+
+      {!a.archived || a.cash_enabled ? <ReservationsCard account={a} onNotice={setNotice} /> : null}
 
       {a.cash_enabled && <StatementCard account={a} names={names} onNotice={setNotice} />}
 

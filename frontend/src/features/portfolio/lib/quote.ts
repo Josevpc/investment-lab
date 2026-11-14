@@ -55,3 +55,15 @@ export function addQuantities(current: string | null | undefined, added: string)
   const fraction = text.slice(text.length - scale).replace(/0+$/, "");
   return fraction ? `${whole}.${fraction}` : whole;
 }
+
+/**
+ * Preço médio de uma compra (centavos por cota): valor ÷ quantidade, meio para cima, só para exibição.
+ * Null se o valor ou a quantidade forem inválidos.
+ */
+export function pricePerUnit(cents: number | null, quantity: string | null | undefined): number | null {
+  const q = parseQuantity(quantity);
+  if (!q || cents === null || !Number.isInteger(cents) || cents <= 0) return null;
+  // centavos por cota = cents ÷ (digits / 10^decimals) = cents × 10^decimals ÷ digits
+  const numerator = BigInt(cents) * 10n ** BigInt(q.decimals);
+  return Number((2n * numerator + q.digits) / (2n * q.digits));
+}

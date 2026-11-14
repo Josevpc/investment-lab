@@ -4,7 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Asset } from "@/features/portfolio";
 import { todayISO } from "@/shared/lib/format";
-import type { Account } from "../types";
+import type { MoneyTextPart } from "@/shared/lib/moneyText";
+import type { Account, ReservationsOverview } from "../types";
 import { PurchaseForm } from "./PurchaseForm";
 
 const today = todayISO();
@@ -122,5 +123,119 @@ describe("Comprar ativo com o caixa", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Caixa insuficiente em XP");
     expect(screen.getByText(/Registre antes o depósito que trouxe esse dinheiro/)).toBeInTheDocument();
+  });
+});
+
+describe("Comprar ativo com o caixa: com dinheiro separado", () => {
+  const withReserved: Account = { ...account, reserved_cents: 20_000, free_cents: 30_000 };
+  const hglg = { ...fii, class_name: "FII" } as Asset;
+  const bova = { ...etf, class_name: "ETF" } as Asset;
+  const overview: ReservationsOverview = {
+    reserved_cents: 20_000,
+    free_cents: 30_000,
+    by_class: [{ class_id: 3, class_name: "FII", color: "#5e8a57", remaining_cents: 20_000 }],
+    reservations: [
+      { id: 11, account_id: 2, class_id: 3, class_name: "FII", date: "2026-10-05", amount_cents: 20_000, used_cents: 0, released_cents: 0, remaining_cents: 20_000, deletable: true },
+    ],
+  };
+
+  function mockReserved(result: Record<string, unknown> = {}) {
+    const calls: Call[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const method = init?.method ?? "GET";
+        calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+        if (method === "GET") return new Response(JSON.stringify(overview), { status: 200 });
+        return new Response(
+          JSON.stringify({ movement: { id: 1 }, account_id: 2, deposit_cents: 0, cash_balance_cents: 40_000, ...result }),
+          { status: 201 },
+        );
+      }),
+    );
+    return calls;
+  }
+
+  function renderReserved(acc: Account = withReserved) {
+    const onDone = vi.fn<(message: MoneyTextPart[]) => void>();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <PurchaseForm account={acc} assets={[hglg, bova]} onDone={onDone} onCancel={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    return onDone;
+  }
+
+  const text = (parts: MoneyTextPart[]) => parts.map((p) => (typeof p === "string" ? p : `R$ ${(p.cents / 100).toFixed(2).replace(".", ",")}`)).join("");
+
+  it("antes de confirmar, diz quanto sai do separado da categoria e quanto do caixa livre", async () => {
+    const user = userEvent.setup();
+    mockReserved();
+    renderReserved();
+
+    await user.selectOptions(screen.getByLabelText("Ativo comprado"), "7");
+    await user.type(screen.getByLabelText("Valor da compra (R$)"), "500");
+    expect(await screen.findByText(/^Vai usar/)).toHaveTextContent("Vai usar R$ 200,00 do separado para FII e R$ 300,00 do caixa livre.");
+    expect(screen.getByRole("button", { name: "Registrar compra" })).toBeEnabled();
+  });
+
+  it("compra pequena sai toda do separado", async () => {
+    const user = userEvent.setup();
+    mockReserved();
+    renderReserved();
+
+    await user.selectOptions(screen.getByLabelText("Ativo comprado"), "7");
+    await user.type(screen.getByLabelText("Valor da compra (R$)"), "100");
+    expect(await screen.findByText(/^Vai usar/)).toHaveTextContent("Vai usar R$ 100,00 do separado para FII e R$ 0,00 do caixa livre.");
+  });
+
+  it("o separado de outra categoria não paga a compra: só o caixa livre", async () => {
+    const user = userEvent.setup();
+    mockReserved();
+    renderReserved();
+
+    await user.selectOptions(screen.getByLabelText("Ativo comprado"), "8");
+    await user.type(screen.getByLabelText("Valor da compra (R$)"), "200");
+    expect(await screen.findByText(/^Não há nada separado para ETF/)).toHaveTextContent("vai usar R$ 200,00 do caixa livre");
+
+    await user.clear(screen.getByLabelText("Valor da compra (R$)"));
+    await user.type(screen.getByLabelText("Valor da compra (R$)"), "400");
+    const submit = screen.getByRole("button", { name: "Registrar compra" });
+    expect(submit).toBeDisabled();
+    expect(screen.getByText(/O caixa livre tem/)).toHaveTextContent("O caixa livre tem R$ 300,00: faltam R$ 100,00 para esta compra.");
+  });
+
+  it("no sucesso diz o que saiu do separado, do caixa livre e quanto ainda está separado", async () => {
+    const user = userEvent.setup();
+    const calls = mockReserved({ from_reserved_cents: 10_000, from_free_cents: 0, reserved_left_cents: 10_000 });
+    const onDone = renderReserved();
+
+    await user.selectOptions(screen.getByLabelText("Ativo comprado"), "7");
+    await user.type(screen.getByLabelText("Valor da compra (R$)"), "100");
+    await user.click(screen.getByRole("button", { name: "Registrar compra" }));
+
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    expect(calls.filter((c) => c.method === "POST")[0].body).toEqual({ asset_id: 7, amount_cents: 10_000, date: today });
+    const message = text(onDone.mock.calls[0][0]);
+    expect(message).toContain("Compra registrada. R$ 100,00 saíram do separado e R$ 0,00 do caixa livre.");
+    expect(message).toContain("Ainda há R$ 100,00 separados para FII.");
+  });
+
+  it("sem nada separado na conta, nada extra aparece: nem busca, nem prévia, nem a frase nova", async () => {
+    const user = userEvent.setup();
+    const calls = mockApi();
+    const onDone = renderForm();
+
+    await user.selectOptions(screen.getByLabelText("Ativo comprado"), "7");
+    await user.type(screen.getByLabelText("Valor da compra (R$)"), "100");
+    expect(screen.queryByText(/^Vai usar/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/separado/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Registrar compra" }));
+
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    expect(calls.some((c) => c.url.includes("reservations"))).toBe(false);
+    expect(text(onDone.mock.calls[0][0] as MoneyTextPart[])).toMatch(/^Compra registrada: R\$ 100,00 em HGLG11/);
+    expect(text(onDone.mock.calls[0][0] as MoneyTextPart[])).not.toContain("separado");
   });
 });

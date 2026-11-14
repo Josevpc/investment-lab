@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
-import { Button, cx, ErrorBox, Money } from "@/shared/ui";
+import { Button, cx, ErrorBox, Money, Stat } from "@/shared/ui";
 import { cashErrorHint, signOf } from "../lib/entries";
 
 /** Valor com sinal escrito (+ entra, − sai) além da cor; leitores de tela ouvem "entrada" ou "saída". */
@@ -18,6 +18,18 @@ export function SignedMoney({ cents, className }: { cents: number; className?: s
       {signOf(cents) && " "}
       <Money cents={Math.abs(cents)} />
     </span>
+  );
+}
+
+/**
+ * Dinheiro separado para comprar: contorno tracejado e o texto "ainda não investido", para não depender
+ * da cor (nem só do traço) para distinguir de caixa livre e de investido.
+ */
+export function SeparatedStat({ cents, hint }: { cents: number; hint?: ReactNode }) {
+  return (
+    <div className="min-w-0 rounded-field border border-dashed border-ink-3 p-3">
+      <Stat label="Separado para comprar" value={<Money cents={cents} />} hint={hint ?? "ainda não investido"} />
+    </div>
   );
 }
 

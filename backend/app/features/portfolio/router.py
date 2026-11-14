@@ -14,6 +14,7 @@ from app.features.portfolio.schemas import (
     AssetOut,
     AssetUpdate,
     BalanceIn,
+    BalanceOut,
     InstitutionIn,
     InstitutionOut,
     MonthSummary,
@@ -131,7 +132,7 @@ def get_summary(session: Session = Depends(get_session)):
     return service.get_summary(session)
 
 
-@router.post("/assets/{asset_id}/balance", response_model=AssetOut)
+@router.post("/assets/{asset_id}/balance", response_model=BalanceOut)
 def record_balance(asset_id: int, data: BalanceIn, session: Session = Depends(get_session)):
     return movements.record_balance(session, asset_id, data)
 

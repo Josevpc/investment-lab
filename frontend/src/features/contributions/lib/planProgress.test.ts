@@ -101,7 +101,7 @@ describe("planProgress", () => {
     it("usa só a parte que conta na meta (goal_cents e reserve_goal_cents)", () => {
       const withOff = { ...summary, by_class: [{ ...summary.by_class[0], amount_cents: 5_000, goal_cents: 1_000 }] };
       expect(executedFromSummary(withOff)).toEqual({
-        byClass: [{ class_key: "renda_variavel", amount_cents: 1_000 }],
+        byClass: [{ class_key: "renda_variavel", amount_cents: 1_000, reserved_cents: 0, from_reserved_cents: 0 }],
         reserveCents: 0,
         offGoalCents: 2_000,
       });
@@ -126,6 +126,63 @@ describe("planProgress", () => {
         }),
       );
       expect(p.rows.find((r) => r.key === "cripto")).toMatchObject({ doneCents: 3_000, remainingCents: 0, overCents: 0 });
+    });
+  });
+  describe("dinheiro separado para comprar", () => {
+    // O exemplo do plano: em outubro R$ 40 ficaram separados para Renda Variável (meta R$ 40);
+    // em novembro a compra de R$ 100 usou esse separado: R$ 60 saíram do caixa livre.
+    const summary = (by_class: Record<string, unknown>[]) => ({
+      by_class: by_class as never,
+      reserve_goal_cents: 0,
+      off_goal_cents: 0,
+    });
+    const base = { class_name: "Renda Variável", color: "#000" };
+
+    it("o separado do mês conta como feito e aparece à parte do comprado", () => {
+      const p = planProgress(
+        { ...contribution, reserve_cents: 0, plan: [{ class_key: "renda_variavel", class_name: "Renda Variável", color: "#000", amount_cents: 4_000 }] },
+        executedFromSummary(summary([{ ...base, class_key: "renda_variavel", amount_cents: 4_000, goal_cents: 4_000, reserved_cents: 4_000, from_reserved_cents: 0 }])),
+      );
+      expect(p.rows[0]).toMatchObject({
+        doneCents: 4_000,
+        boughtCents: 0,
+        separatedCents: 4_000,
+        fulfilled: true,
+        remainingCents: 0,
+        boughtBps: 0,
+        separatedBps: 10_000,
+      });
+      expect(p.separatedCents).toBe(4_000);
+      expect(p.complete).toBe(true);
+    });
+
+    it("no mês da compra, o separado de antes não soma ao feito: só informa", () => {
+      const p = planProgress(
+        { ...contribution, reserve_cents: 0, plan: [{ class_key: "renda_variavel", class_name: "Renda Variável", color: "#000", amount_cents: 6_000 }] },
+        executedFromSummary(summary([{ ...base, class_key: "renda_variavel", amount_cents: 6_000, goal_cents: 6_000, reserved_cents: 0, from_reserved_cents: 4_000 }])),
+      );
+      expect(p.rows[0]).toMatchObject({ doneCents: 6_000, boughtCents: 6_000, separatedCents: 0, fromReservedCents: 4_000, fulfilled: true });
+    });
+
+    it("comprado + separado abaixo do planejado não é cumprido e os dois trechos cabem na barra", () => {
+      const p = planProgress(
+        { ...contribution, reserve_cents: 0, plan: [{ class_key: "renda_variavel", class_name: "Renda Variável", color: "#000", amount_cents: 10_000 }] },
+        executedFromSummary(summary([{ ...base, class_key: "renda_variavel", amount_cents: 7_000, goal_cents: 7_000, reserved_cents: 4_000 }])),
+      );
+      expect(p.rows[0]).toMatchObject({ boughtCents: 3_000, separatedCents: 4_000, fulfilled: false, remainingCents: 3_000, boughtBps: 3_000, separatedBps: 4_000 });
+    });
+
+    it("passou do planejado: a barra reparte o feito entre comprado e separado, para o hachurado não sumir", () => {
+      const p = planProgress(
+        { ...contribution, reserve_cents: 0, plan: [{ class_key: "renda_variavel", class_name: "Renda Variável", color: "#000", amount_cents: 1_000 }] },
+        executedFromSummary(summary([{ ...base, class_key: "renda_variavel", amount_cents: 4_000, goal_cents: 4_000, reserved_cents: 1_000 }])),
+      );
+      expect(p.rows[0]).toMatchObject({ progressBps: 10_000, overCents: 3_000, boughtBps: 7_500, separatedBps: 2_500 });
+    });
+
+    it("sem as chaves novas (API antiga), tudo é comprado", () => {
+      const p = planProgress(contribution, executed({ renda_variavel: 1_000 }));
+      expect(p.rows.find((r) => r.key === "renda_variavel")).toMatchObject({ boughtCents: 1_000, separatedCents: 0, fromReservedCents: 0 });
     });
   });
 });

@@ -1,0 +1,203 @@
+- generic [ref=f2e3]:
+  - link "Pular para o conteúdo" [ref=f2e4] [cursor=pointer]:
+    - /url: "#conteudo"
+  - complementary [ref=f2e5]:
+    - generic [ref=f2e6]:
+      - link "Investment Lab, ir para a visão geral" [ref=f2e8] [cursor=pointer]:
+        - /url: /
+        - generic [ref=f2e15]: investment lab
+      - navigation "Principal" [ref=f2e16]:
+        - link "Visão geral" [ref=f2e18] [cursor=pointer]:
+          - /url: /
+        - link "Aporte do mês" [ref=f2e25] [cursor=pointer]:
+          - /url: /aporte
+        - generic [ref=f2e30]:
+          - link "Carteira" [expanded] [ref=f2e31] [cursor=pointer]:
+            - /url: /carteira
+          - list [ref=f2e36]:
+            - listitem [ref=f2e37]:
+              - link "Resumo" [ref=f2e38] [cursor=pointer]:
+                - /url: /carteira
+            - listitem [ref=f2e40]:
+              - link "Ativos" [ref=f2e41] [cursor=pointer]:
+                - /url: /carteira/ativos
+            - listitem [ref=f2e43]:
+              - link "Movimentações" [ref=f2e44] [cursor=pointer]:
+                - /url: /carteira/movimentacoes
+            - listitem [ref=f2e46]:
+              - link "Retiradas" [ref=f2e47] [cursor=pointer]:
+                - /url: /carteira/retiradas
+            - listitem [ref=f2e49]:
+              - link "Contas e caixa" [ref=f2e50] [cursor=pointer]:
+                - /url: /carteira/contas
+        - link "Histórico" [ref=f2e53] [cursor=pointer]:
+          - /url: /historico
+        - link "Trajetória" [ref=f2e57] [cursor=pointer]:
+          - /url: /trajetoria
+        - link "Metas" [ref=f2e62] [cursor=pointer]:
+          - /url: /metas
+      - generic [ref=f2e67]:
+        - link "Configurações" [ref=f2e68] [cursor=pointer]:
+          - /url: /configuracoes
+        - paragraph [ref=f2e72]: Seus dados ficam só neste dispositivo.
+  - generic [ref=f2e73]:
+    - banner [ref=f2e74]:
+      - paragraph [ref=f2e75]: Carteira · Movimentações
+      - status "Os valores desta tela são fictícios. Seus dados reais não estão sendo usados." [ref=f2e143]: Modo demonstração
+      - generic "Mês em foco" [ref=f2e76]: nov/2026
+      - button "Ocultar valores" [ref=f2e77]
+      - button "Usar tema claro" [ref=f2e81]
+    - main [ref=f2e85]:
+      - generic [ref=f2e86]:
+        - generic [ref=f2e87]:
+          - heading "Carteira" [level=1] [ref=f2e88]
+          - paragraph [ref=f2e89]: Todos os seus ativos, de todas as instituições, em um só lugar.
+        - group "Ações da carteira" [ref=f2e90]:
+          - link "Atualizar saldos" [ref=f2e91] [cursor=pointer]:
+            - /url: /carteira/atualizar
+          - button "Mais ações" [ref=f2e93]
+      - navigation "Seções da carteira" [ref=f2e96]:
+        - link "Resumo" [ref=f2e97] [cursor=pointer]:
+          - /url: /carteira
+        - link "Ativos" [ref=f2e98] [cursor=pointer]:
+          - /url: /carteira/ativos
+        - link "Movimentações" [ref=f2e99] [cursor=pointer]:
+          - /url: /carteira/movimentacoes
+        - link "Retiradas" [ref=f2e100] [cursor=pointer]:
+          - /url: /carteira/retiradas
+        - link "Contas e caixa" [ref=f2e101] [cursor=pointer]:
+          - /url: /carteira/contas
+      - generic [ref=f2e102]:
+        - generic [ref=f2e103]:
+          - heading "Movimentações" [level=2] [ref=f2e104]
+          - generic [ref=f2e262]:
+            - button "Registrar aporte" [active] [ref=f2e263]
+            - button "Transferir entre ativos" [ref=f2e264]
+            - button "Registrar provento" [ref=f2e265]
+            - button "Resgatar" [ref=f2e266]
+        - generic [ref=f2e129]:
+          - generic [ref=f2e130]:
+            - generic [ref=f2e131]: Mês
+            - group "Mês das movimentações" [ref=f2e132]:
+              - button "Mês anterior" [ref=f2e133]: ‹
+              - button "Novembro de 2026" [ref=f2e134]: Novembro de 2026 ▾
+              - button "Próximo mês" [ref=f2e135]: ›
+          - paragraph [ref=f2e136]:
+            - text: "Aportes:"
+            - strong [ref=f2e145]: R$ 1.394,00
+            - text: "· Ativos novos:"
+            - strong [ref=f2e146]: R$ 350,00
+            - text: "· Separado no mês:"
+            - strong [ref=f2e147]: R$ 40,00
+            - text: "· Total investido no mês:"
+            - strong [ref=f2e148]: R$ 1.784,00
+            - text: "· Proventos:"
+            - strong [ref=f2e149]: R$ 225,00
+            - text: "· Resgates:"
+            - strong [ref=f2e150]: R$ 500,00
+            - text: ·
+            - link "Ver todas as retiradas" [ref=f2e151] [cursor=pointer]:
+              - /url: /carteira/retiradas
+        - table [ref=f2e153]:
+          - rowgroup [ref=f2e154]:
+            - row [ref=f2e155]:
+              - columnheader "Data" [ref=f2e156]
+              - columnheader "Tipo" [ref=f2e157]
+              - columnheader "Ativo" [ref=f2e158]
+              - columnheader "Valor" [ref=f2e159]
+              - columnheader [ref=f2e160]
+          - rowgroup [ref=f2e161]:
+            - row [ref=f2e267]:
+              - cell "13/11/2026" [ref=f2e268]
+              - cell "Aporte" [ref=f2e269]
+              - cell "FII Tijolo Exemplo" [ref=f2e272]
+              - cell "R$ 1.234,00" [ref=f2e273]
+              - cell [ref=f2e274]:
+                - 'button "Tirar da meta : aporte de R$ 1.234,00 em FII Tijolo Exemplo" [ref=f2e275]':
+                  - text: Tirar da meta
+                  - generic [ref=f2e276]: ": aporte de R$ 1.234,00 em FII Tijolo Exemplo"
+                - button "Editar aporte de FII Tijolo Exemplo" [ref=f2e277]: Editar
+                - button "Desfazer aporte de FII Tijolo Exemplo" [ref=f2e278]: Desfazer
+            - row [ref=f2e162]:
+              - cell "13/11/2026" [ref=f2e163]
+              - cell "Aporte" [ref=f2e164]
+              - cell "Cripto Exemplo" [ref=f2e167]
+              - cell "R$ 120,00" [ref=f2e168]
+              - cell [ref=f2e169]:
+                - 'button "Tirar da meta : aporte de R$ 120,00 em Cripto Exemplo" [ref=f2e170]':
+                  - text: Tirar da meta
+                  - generic [ref=f2e171]: ": aporte de R$ 120,00 em Cripto Exemplo"
+                - button "Editar aporte de Cripto Exemplo" [ref=f2e172]: Editar
+                - button "Desfazer aporte de Cripto Exemplo" [ref=f2e173]: Desfazer
+            - row [ref=f2e174]:
+              - cell "05/11/2026" [ref=f2e175]
+              - cell "Resgate" [ref=f2e176]
+              - 'cell "Reserva Exemplo Motivo: Conserto do carro (exemplo)" [ref=f2e179]':
+                - text: Reserva Exemplo
+                - generic [ref=f2e180]: "Motivo: Conserto do carro (exemplo)"
+              - cell "− R$ 500,00" [ref=f2e181]
+              - cell [ref=f2e182]:
+                - button "Editar resgate de Reserva Exemplo" [ref=f2e183]: Editar
+                - button "Desfazer resgate de Reserva Exemplo" [ref=f2e184]: Desfazer
+            - row [ref=f2e185]:
+              - cell "05/11/2026" [ref=f2e186]
+              - cell "Provento" [ref=f2e187]
+              - cell "FII Papel Exemplo" [ref=f2e190]
+              - cell "R$ 120,00" [ref=f2e191]
+              - cell [ref=f2e192]:
+                - button "Editar provento de FII Papel Exemplo" [ref=f2e193]: Editar
+                - button "Excluir provento de FII Papel Exemplo" [ref=f2e194]: Excluir
+            - row [ref=f2e195]:
+              - cell "05/11/2026" [ref=f2e196]
+              - cell "Provento" [ref=f2e197]
+              - cell "FII Tijolo Exemplo" [ref=f2e200]
+              - cell "R$ 105,00" [ref=f2e201]
+              - cell [ref=f2e202]:
+                - button "Editar provento de FII Tijolo Exemplo" [ref=f2e203]: Editar
+                - button "Excluir provento de FII Tijolo Exemplo" [ref=f2e204]: Excluir
+            - row [ref=f2e205]:
+              - cell "03/11/2026" [ref=f2e206]
+              - cell "Aporte Ativo novo" [ref=f2e207]:
+                - generic [ref=f2e208]:
+                  - generic [ref=f2e209]: Aporte
+                  - generic [ref=f2e210]: Ativo novo
+              - cell "Ação Nova Exemplo" [ref=f2e211]
+              - cell "R$ 200,00" [ref=f2e212]
+              - cell [ref=f2e213]:
+                - 'button "Tirar da meta : aporte de R$ 200,00 em Ação Nova Exemplo" [ref=f2e214]':
+                  - text: Tirar da meta
+                  - generic [ref=f2e215]: ": aporte de R$ 200,00 em Ação Nova Exemplo"
+                - 'button "Não contar como aporte: Ação Nova Exemplo" [ref=f2e216]': Não contar como aporte
+            - row [ref=f2e217]:
+              - cell "03/11/2026" [ref=f2e218]
+              - cell "Aporte Ativo novo" [ref=f2e219]:
+                - generic [ref=f2e220]:
+                  - generic [ref=f2e221]: Aporte
+                  - generic [ref=f2e222]: Ativo novo
+              - cell "CDB Novo Exemplo" [ref=f2e223]
+              - cell "R$ 150,00" [ref=f2e224]
+              - cell [ref=f2e225]:
+                - 'button "Tirar da meta : aporte de R$ 150,00 em CDB Novo Exemplo" [ref=f2e226]':
+                  - text: Tirar da meta
+                  - generic [ref=f2e227]: ": aporte de R$ 150,00 em CDB Novo Exemplo"
+                - 'button "Não contar como aporte: CDB Novo Exemplo" [ref=f2e228]': Não contar como aporte
+            - row [ref=f2e229]:
+              - cell "01/11/2026" [ref=f2e230]
+              - cell "Aporte" [ref=f2e231]
+              - cell "ETF Exemplo" [ref=f2e234]
+              - cell "R$ 100,00" [ref=f2e235]
+              - cell [ref=f2e236]:
+                - 'button "Tirar da meta : aporte de R$ 100,00 em ETF Exemplo" [ref=f2e237]':
+                  - text: Tirar da meta
+                  - generic [ref=f2e238]: ": aporte de R$ 100,00 em ETF Exemplo"
+                - button "Editar aporte de ETF Exemplo" [ref=f2e239]: Editar
+                - button "Desfazer aporte de ETF Exemplo" [ref=f2e240]: Desfazer
+  - status [ref=f2e279]:
+    - generic [ref=f2e280]:
+      - generic [ref=f2e284]:
+        - paragraph [ref=f2e285]: Aporte registrado!
+        - paragraph [ref=f2e286]: R$ 1.234,00 aportados em 1 ativo. O dinheiro novo já soma ao investido.
+        - paragraph [ref=f2e287]: 🔥 Mês em dia! Sequência de 7 meses
+        - link "Atualize os saldos dos demais ativos e feche o mês." [ref=f2e288] [cursor=pointer]:
+          - /url: /carteira/fechamento
+      - button "Fechar aviso" [ref=f2e289]: ×

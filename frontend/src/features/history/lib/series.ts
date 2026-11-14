@@ -63,9 +63,24 @@ export function seriesValues(point: EvolutionPoint, series: readonly Composition
   return Object.fromEntries(series.map((s) => [s.key, s.classKeys.reduce((sum, key) => sum + (point.by_class[key] ?? 0), 0)]));
 }
 
-/** Participação (pontos-base) de cada série no patrimônio investido da data (sem a reserva). */
+/** Total separado numa data (centavos); 0 numa API anterior ao separado. */
+export function separatedTotal(point: EvolutionPoint): number {
+  return point.reserved_cents ?? Object.values(point.reserved_by_class ?? {}).reduce((sum, v) => sum + v, 0);
+}
+
+/** Dinheiro separado (centavos) de cada série numa data: a soma das categorias dela. 0 numa API anterior ao separado. */
+export function seriesSeparated(point: EvolutionPoint, series: readonly CompositionSeries[]): Record<string, number> {
+  const reserved = point.reserved_by_class ?? {};
+  return Object.fromEntries(series.map((s) => [s.key, s.classKeys.reduce((sum, key) => sum + (reserved[key] ?? 0), 0)]));
+}
+
+/**
+ * Participação (pontos-base) de cada série no patrimônio investido da data (sem a reserva de emergência). O dinheiro
+ * separado para comprar uma categoria conta na participação dela.
+ */
 export function seriesShares(point: EvolutionPoint, series: readonly CompositionSeries[]): Record<string, number> {
-  const total = Object.values(point.by_class).reduce((sum, v) => sum + v, 0);
+  const total = Object.values(point.by_class).reduce((sum, v) => sum + v, 0) + Object.values(point.reserved_by_class ?? {}).reduce((sum, v) => sum + v, 0);
   const values = seriesValues(point, series);
-  return Object.fromEntries(series.map((s) => [s.key, total > 0 ? Math.round((values[s.key] * 10_000) / total) : 0]));
+  const separated = seriesSeparated(point, series);
+  return Object.fromEntries(series.map((s) => [s.key, total > 0 ? Math.round(((values[s.key] + separated[s.key]) * 10_000) / total) : 0]));
 }

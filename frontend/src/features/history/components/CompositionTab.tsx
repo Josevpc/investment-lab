@@ -4,11 +4,13 @@ import { Area, AreaChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, X
 import { legendText } from "@/shared/lib/chartLegend";
 import { groupsByClassKey, useAssetGroups } from "@/features/groups";
 import { useAssetClasses } from "@/features/portfolio";
-import { AXIS, GRID, percentLabel, RESERVE_COLOR, tooltipStyle } from "@/shared/lib/chart";
+import { AXIS, GRID, percentLabel, RESERVE_COLOR, SEPARATED, SEPARATED_LABEL, tooltipStyle } from "@/shared/lib/chart";
 import { formatBRL, formatBRLCompact, formatDate, formatPercent, formatTickDate } from "@/shared/lib/format";
 import { Card, Empty, ErrorBox, Loading, Money, Notice, Segmented } from "@/shared/ui";
+import { ChartLegend, LegendBox } from "@/shared/ui/ChartLegend";
+import { SEPARATED_PATTERN_ID, SeparatedPattern, SeparatedSwatch } from "@/shared/ui/SeparatedMark";
 import { rangeLabel, type RangeKey } from "../lib/range";
-import { compositionSeries, seriesShares, seriesValues, type CompositionBy } from "../lib/series";
+import { compositionSeries, separatedTotal, seriesShares, seriesValues, type CompositionBy } from "../lib/series";
 import type { Evolution } from "../types";
 
 interface Props {
@@ -35,12 +37,13 @@ export function CompositionTab({ range, data, loading, error }: Props) {
   const by: CompositionBy = canGroup ? chosenBy : "class";
   const series = compositionSeries(dataClasses, groupOfKey, by);
   const noun = by === "group" ? "grupo" : "categoria";
-  const points = raw.map((p) => ({ date: p.date, reserva: p.reserve_cents, ...seriesValues(p, series) }));
+  const points = raw.map((p) => ({ date: p.date, reserva: p.reserve_cents, separado: separatedTotal(p), ...seriesValues(p, series) }));
   const shares = raw.map((p) => ({
     date: p.date,
     ...Object.fromEntries(Object.entries(seriesShares(p, series)).map(([key, bps]) => [key, bps / 100])),
   }));
   const hasReserve = raw.some((p) => p.reserve_cents > 0);
+  const hasSeparated = raw.some((p) => separatedTotal(p) > 0);
   const groupedSeries = series.filter((s) => s.isGroup);
 
   return (
@@ -87,6 +90,7 @@ export function CompositionTab({ range, data, loading, error }: Props) {
           >
             <p className="-mt-2 mb-3 text-sm text-slate-600 dark:text-slate-400">
               Para onde o patrimônio foi: percentual de cada {noun} em cada data de atualização de saldo (sem a reserva).
+              {hasSeparated && " O dinheiro separado para comprar uma categoria conta na participação dela."}
             </p>
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
@@ -148,9 +152,20 @@ export function CompositionTab({ range, data, loading, error }: Props) {
           </Card>
 
           <Card title={`Valor por ${noun}`}>
-            <div className="h-80">
+            <div
+              role="img"
+              aria-label={`Gráfico de áreas empilhadas com o valor de cada ${noun} em cada data de saldo${
+                hasSeparated ? `, com a faixa hachurada "${SEPARATED_LABEL}" no topo, nas datas em que há dinheiro separado` : ""
+              }. Os valores estão na tabela logo abaixo.`}
+              className="h-80"
+            >
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={points} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
+                  {hasSeparated && (
+                    <defs>
+                      <SeparatedPattern />
+                    </defs>
+                  )}
                   <CartesianGrid stroke={GRID} vertical={false} />
                   <XAxis dataKey="date" tickFormatter={formatTickDate} stroke={AXIS} fontSize={13} />
                   <YAxis tickFormatter={formatBRLCompact} stroke={AXIS} fontSize={13} width={72} />
@@ -159,7 +174,6 @@ export function CompositionTab({ range, data, loading, error }: Props) {
                     labelFormatter={(label) => formatDate(String(label))}
                     formatter={(value) => formatBRL(Number(value))}
                   />
-                  <Legend formatter={legendText} />
                   {series.map((c) => (
                     <Area
                       key={c.key}
@@ -185,9 +199,30 @@ export function CompositionTab({ range, data, loading, error }: Props) {
                       fillOpacity={0.55}
                     />
                   )}
+                  {hasSeparated && (
+                    <Area
+                      isAnimationActive={false}
+                      type="monotone"
+                      dataKey="separado"
+                      name={SEPARATED_LABEL}
+                      stackId="values"
+                      stroke={SEPARATED}
+                      strokeWidth={2}
+                      strokeDasharray="5 3"
+                      fill={`url(#${SEPARATED_PATTERN_ID})`}
+                      fillOpacity={1}
+                    />
+                  )}
                 </AreaChart>
               </ResponsiveContainer>
             </div>
+            <ChartLegend
+              items={[
+                ...series.map((c) => ({ key: c.key, label: c.name, swatch: <LegendBox color={c.color} opacity={0.55} /> })),
+                ...(hasReserve ? [{ key: "reserva", label: "Reserva de emergência", swatch: <LegendBox color={RESERVE_COLOR} opacity={0.55} /> }] : []),
+                ...(hasSeparated ? [{ key: "separado", label: SEPARATED_LABEL, swatch: <SeparatedSwatch /> }] : []),
+              ]}
+            />
             <details className="mt-4">
               <summary className="cursor-pointer text-sm font-medium text-blue-700 dark:text-blue-300">Ver os mesmos dados em tabela</summary>
               <div className="relative mt-3 overflow-x-auto" role="region" aria-label={`Valor por ${noun}, por data de saldo`} tabIndex={0}>
@@ -200,6 +235,7 @@ export function CompositionTab({ range, data, loading, error }: Props) {
                         <th key={c.key} scope="col" className="pb-2 pl-3 text-right font-medium">{c.name}</th>
                       ))}
                       {hasReserve && <th scope="col" className="pb-2 pl-3 text-right font-medium">Reserva</th>}
+                      {hasSeparated && <th scope="col" className="pb-2 pl-3 text-right font-medium">Separado</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -210,6 +246,7 @@ export function CompositionTab({ range, data, loading, error }: Props) {
                           <td key={c.key} className="tabular whitespace-nowrap py-2 pl-3 text-right"><Money cents={seriesValues(p, series)[c.key] ?? 0} /></td>
                         ))}
                         {hasReserve && <td className="tabular whitespace-nowrap py-2 pl-3 text-right"><Money cents={p.reserve_cents} /></td>}
+                        {hasSeparated && <td className="tabular whitespace-nowrap py-2 pl-3 text-right"><Money cents={separatedTotal(p)} /></td>}
                       </tr>
                     ))}
                   </tbody>

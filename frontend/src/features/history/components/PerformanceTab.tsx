@@ -102,7 +102,7 @@ function StaleAssets({ assets }: { assets: StaleAsset[] }) {
 }
 
 /** Sua carteira vs. mercado: retorno acumulado, em %, a partir dos saldos digitados em cada data (ver `method`). */
-export function PerformanceTab({ range }: { range: RangeKey }) {
+export function PerformanceTab({ range, hasSeparated = false }: { range: RangeKey; hasSeparated?: boolean }) {
   const [chosenScope, setScope] = useState("total");
   const [includeReserve, setIncludeReserve] = useState(false);
   const [showCdi, setShowCdi] = useState(true);
@@ -180,6 +180,11 @@ export function PerformanceTab({ range }: { range: RangeKey }) {
         <p className="-mt-2 mb-4 text-sm text-slate-600 dark:text-slate-400">
           Retorno acumulado, a partir dos saldos que você atualiza, comparado com o CDI no mesmo período
         </p>
+        {hasSeparated && (
+          <p className="-mt-2 mb-4 text-sm text-slate-600 dark:text-slate-400">
+            O dinheiro separado não entra na rentabilidade nem na comparação com o CDI até ser investido.
+          </p>
+        )}
 
         <div className="mb-5 flex flex-wrap items-end gap-x-6 gap-y-3">
           <label className="block text-sm">

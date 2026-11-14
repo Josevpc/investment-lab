@@ -21,7 +21,7 @@ import {
 import { OFF_GOAL_HELP, OFF_GOAL_LABEL, canBeOffGoal, offGoalActionLabel, offGoalDone } from "../lib/offGoal";
 import { uncountDone, uncountMessage } from "../lib/newInvestment";
 import { cashLink, cashUseProblem } from "../lib/cashLink";
-import { addQuantities, parseQuantity, valueFromQuote } from "../lib/quote";
+import { addQuantities, parseQuantity, pricePerUnit, valueFromQuote } from "../lib/quote";
 import type { Asset, Movement, MovementKind } from "../types";
 import { NOTE_MAX } from "../lib/redemption";
 import { CashContributionNote } from "./CashContributionNote";
@@ -53,12 +53,14 @@ function describe(m: Movement): string {
 const SHIFTED_BALANCES = "Os saldos que você digitou depois dessa data mudam junto.";
 
 /** O que acontece nos saldos ao desfazer, dito antes de confirmar. */
-export function undoMessage(m: Movement): string {
+export function undoMessage(m: Movement, asset?: Pick<Asset, "quantity">): string {
   const value = formatBRL(m.amount_cents);
   const tail = " Os fechamentos já registrados no Histórico não mudam.";
   if (m.kind === "aporte") {
+    // Ao desfazer, o servidor não devolve as cotas compradas: a quantidade do cadastro fica como está.
+    const quantity = parseQuantity(asset?.quantity) ? ` A quantidade de cotas de ${m.asset_name} não volta sozinha; confira no cadastro do ativo.` : "";
     // Com o caixa ativado na conta do ativo, o aporte (ou a compra) também tem lançamentos no extrato.
-    return `Desfazer o aporte de ${value} em ${m.asset_name} (${formatDate(m.date)})? O valor sai do investido e do saldo do ativo. Se a conta do ativo tem caixa ativado, os lançamentos desse aporte saem do extrato (numa compra, o dinheiro volta ao caixa).${tail}`;
+    return `Desfazer o aporte de ${value} em ${m.asset_name} (${formatDate(m.date)})? O valor sai do investido e do saldo do ativo. Se a conta do ativo tem caixa ativado, os lançamentos desse aporte saem do extrato (numa compra, o dinheiro volta ao caixa).${quantity}${tail}`;
   }
   if (m.kind === "resgate") {
     const motivo = m.note ? ` (motivo: ${m.note})` : "";
@@ -372,18 +374,26 @@ function AporteForm({ assets, onDone }: { assets: Asset[]; onDone: () => void })
   const accounts = useAccounts();
   const reasonId = useId();
   const offGoalHelpId = useId();
+  const sharesHintId = useId();
+  const sharesErrorId = useId();
 
   const selected = assets.find((a) => String(a.id) === asset);
   const isCrypto = selected?.class_key === "cripto";
   // Cripto com quantidade cadastrada: o aporte é "quantas moedas, a que cotação" e o app faz as contas.
   const byQuantity = isCrypto && parseQuantity(selected?.quantity) !== null;
+  // Ação, ETF e FII: o valor em R$ segue como entrada e as cotas compradas são opcionais (só atualizam a quantidade do cadastro).
+  const isShare = !isCrypto && (selected?.asset_type === "acao" || selected?.asset_type === "etf" || selected?.asset_type === "fii");
+  const byShares = isShare && parseQuantity(selected?.quantity) !== null;
   const boughtOk = parseQuantity(bought) !== null;
+  const sharesError = byShares && bought.trim() !== "" && !boughtOk;
   const cents = byQuantity ? valueFromQuote(bought, quote) : parseMoneyToCents(amount);
   const newQuantity = byQuantity && boughtOk ? addQuantities(selected?.quantity, bought) : null;
   const newBalance = newQuantity ? valueFromQuote(newQuantity, quote) : null;
   const link = cashLink(selected?.account_id ?? null, accounts.data ?? [], day);
   const takesCash = useCash && link.kind === "ledger";
   const cashProblem = takesCash && cents !== null ? cashUseProblem(link.account.name, cents, link.account.balance_cents) : null;
+  const sharesAfter = byShares && boughtOk ? addQuantities(selected?.quantity, bought) : null;
+  const sharePrice = sharesAfter ? pricePerUnit(cents, bought) : null;
   const balanceCents = balance.trim() === "" ? null : parseMoneyToCents(balance);
   // Sem saldo informado, o app assume o saldo registrado mais o aporte.
   const assumed = selected && cents !== null ? selected.current_cents + cents : null;
@@ -394,6 +404,7 @@ function AporteForm({ assets, onDone }: { assets: Asset[]; onDone: () => void })
     day !== "" &&
     day <= todayISO() &&
     (byQuantity ? newBalance !== null : balance.trim() === "" || balanceCents !== null) &&
+    !sharesError &&
     cashProblem === null;
 
   function submit(event: FormEvent) {
@@ -413,6 +424,7 @@ function AporteForm({ assets, onDone }: { assets: Asset[]; onDone: () => void })
             ...(takesCash && { use_cash: true }),
             ...(offGoal && { off_goal: true }),
             ...(byQuantity && { quantity_added: addQuantities(null, bought) ?? undefined }),
+            ...(byShares && boughtOk && { quantity_added: addQuantities(null, bought) ?? undefined }),
           },
         },
       ],
@@ -428,7 +440,16 @@ function AporteForm({ assets, onDone }: { assets: Asset[]; onDone: () => void })
         depois do último saldo do ativo; é ele que permite medir quantos % do CDI o ativo rendeu.
       </p>
       <div className="flex flex-wrap items-end gap-4">
-        <AssetSelect label="Ativo" assets={assets} value={asset} onChange={setAsset} />
+        <AssetSelect
+          label="Ativo"
+          assets={assets}
+          value={asset}
+          onChange={(value) => {
+            setAsset(value);
+            // As cotas digitadas eram de outro ativo: não seguem para o novo.
+            setBought("");
+          }}
+        />
         {!byQuantity && (
           <Field label="Valor do aporte (R$)" error={amount !== "" && cents === null ? "Valor inválido." : null} className="w-44">
             <input inputMode="decimal" className={`${inputClass} tabular`} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0,00" />
@@ -443,6 +464,42 @@ function AporteForm({ assets, onDone }: { assets: Asset[]; onDone: () => void })
           {selected?.name} não tem a quantidade de moedas cadastrada. Informe o valor em R$ abaixo, ou edite o ativo e preencha a quantidade para
           aportar por quantidade e cotação.
         </p>
+      )}
+      {isShare && !byShares && selected && (
+        <p className="text-sm text-slate-600 dark:text-slate-400">
+          {selected.name} não tem a quantidade de cotas cadastrada. Edite o ativo e preencha a quantidade para informar as cotas compradas no aporte.
+        </p>
+      )}
+      {byShares && selected && (
+        <div className="space-y-2">
+          <div className="w-56 max-w-full">
+            <Field label="Cotas compradas (opcional)">
+              <input
+                inputMode="decimal"
+                className={`${inputClass} tabular`}
+                value={bought}
+                onChange={(e) => setBought(e.target.value)}
+                placeholder="Ex.: 5"
+                aria-invalid={sharesError || undefined}
+                aria-describedby={sharesError ? `${sharesHintId} ${sharesErrorId}` : sharesHintId}
+              />
+            </Field>
+            <p id={sharesHintId} className="mt-1.5 text-xs text-slate-600 dark:text-slate-400">
+              Você tem {selected.quantity} cotas em {selected.name}.
+            </p>
+            {sharesError && (
+              <p id={sharesErrorId} className="mt-1 text-sm text-red-700 dark:text-red-400">
+                Quantidade inválida.
+              </p>
+            )}
+          </div>
+          {sharesAfter && cents !== null && cents > 0 && sharePrice !== null && (
+            <p role="status" className="tabular text-sm text-slate-700 dark:text-slate-300">
+              Depois do aporte você terá <strong>{sharesAfter.replace(".", ",")}</strong> cotas. Preço médio desta compra:{" "}
+              <strong><Money cents={sharePrice} /></strong> por cota.
+            </p>
+          )}
+        </div>
       )}
       {byQuantity && selected && (
         <div className="space-y-2">
@@ -716,7 +773,15 @@ export function MovementsCard({
         {totals ? (
           <p className="tabular pb-2 text-sm text-slate-600 dark:text-slate-400">
             Aportes: <strong><Money cents={totals.registered_cents} /></strong> · Ativos novos:{" "}
-            <strong><Money cents={totals.new_assets_cents} /></strong> · Total investido no mês:{" "}
+            <strong><Money cents={totals.new_assets_cents} /></strong>
+            {/* O separado entra no total do mês em que foi separado; sem ele, a soma visível continua como sempre. */}
+            {(totals.reserved_cents ?? 0) > 0 && (
+              <>
+                {" "}
+                · Separado no mês: <strong><Money cents={totals.reserved_cents ?? 0} /></strong>
+              </>
+            )}{" "}
+            · Total investido no mês:{" "}
             <strong className="text-slate-900 dark:text-slate-100"><Money cents={totals.total_cents} /></strong> · Proventos:{" "}
             <strong><Money cents={totals.proventos_cents} /></strong>
             {totals.off_goal_cents > 0 && (
@@ -865,7 +930,8 @@ export function MovementsCard({
                               aria-label={`Desfazer ${KIND_LABEL[m.kind].toLowerCase()} de ${m.asset_name}`}
                               disabled={undo.isPending}
                               onClick={async () => {
-                                if (await confirm({ ...splitQuestion(undoMessage(m)), confirmLabel: "Desfazer movimento" })) {
+                                const asset = (assets.data ?? []).find((a) => a.id === m.asset_id);
+                                if (await confirm({ ...splitQuestion(undoMessage(m, asset)), confirmLabel: "Desfazer movimento" })) {
                                   setRedeemed(null);
                                   undo.mutate(m.id);
                                 }

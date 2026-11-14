@@ -93,7 +93,7 @@ export function HistoryPage() {
         )}
         {tab === "desempenho" && (
           <>
-            <PerformanceTab range={range} />
+            <PerformanceTab range={range} hasSeparated={(evolution.data?.points ?? []).some((p) => (p.reserved_cents ?? 0) > 0)} />
             <AssetsVsCdiCard range={range} />
           </>
         )}

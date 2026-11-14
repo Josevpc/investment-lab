@@ -10,6 +10,10 @@ export const IPCA = "var(--chart-ipca)";
 /** Câmbio (dólar PTAX, referência da cripto): argila. */
 export const USD = "var(--chart-usd)";
 
+/** Dinheiro separado para comprar, ainda não investido: sempre hachurado e com contorno tracejado (ver `SeparatedMark`). */
+export const SEPARATED = "var(--chart-separated)";
+export const SEPARATED_LABEL = "Separado (ainda não investido)";
+
 /**
  * Traço de cada linha de comparação: a carteira é contínua e cada referência tem o seu padrão, para que as linhas
  * se distingam sem depender da cor (daltonismo, impressão em preto e branco).

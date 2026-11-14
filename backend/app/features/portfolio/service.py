@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.errors import ConflictError, InvalidInputError, NotFoundError
+from app.core.money import format_brl
 from app.features.cash import service as cash
 from app.features.portfolio import initial_contribution as initial
 from app.features.portfolio import repository as repo
@@ -39,6 +40,7 @@ from app.features.portfolio.schemas import (
     AssetOut,
     AssetUpdate,
     ClassBreakdown,
+    ClassReservedAmount,
     FiiSegmentBreakdown,
     GroupBreakdown,
     InstitutionBreakdown,
@@ -146,6 +148,13 @@ def update_class(session: Session, class_id: int, data: AssetClassUpdate) -> Ass
         if repo.class_has_active_assets(session, class_id):
             raise ConflictError(
                 "A categoria ainda tem ativos. Mova-os para outra categoria ou arquive-os antes."
+            )
+        separated = cash.reserved_in_class(session, class_id)
+        if separated:
+            raise ConflictError(
+                f"A categoria ainda tem {format_brl(separated)} separados para comprar. Use ou "
+                "libere esse dinheiro antes de arquivar.",
+                reserved_cents=separated,
             )
         if len(repo.list_classes(session)) <= 1:
             raise InvalidInputError("A carteira precisa de ao menos uma categoria.")
@@ -358,12 +367,22 @@ def class_hold_status(session: Session) -> dict[int, ClassHold]:
     }
 
 
-def class_current_values(session: Session) -> dict[int, int]:
-    """Valor por categoria, só dos investimentos: a reserva de emergência fica de fora."""
+def class_current_values(session: Session, *, include_reserved: bool = False) -> dict[int, int]:
+    """Valor por categoria, só dos investimentos: a reserva de emergência fica de fora.
+
+    Com `include_reserved`, soma o dinheiro separado em aberto para cada categoria: ele já tem
+    destino e foi contado no plano do mês em que foi separado, então o próximo aporte deve tratar a
+    categoria como se já o tivesse. A comparação com a meta não o soma: ela mede o que está
+    investido.
+    """
     values = {c.id: 0 for c in repo.list_classes(session)}
     for position in list_positions(session):
         if not position.is_reserve and position.class_id in values:
             values[position.class_id] += position.current_cents
+    if include_reserved:
+        for class_id, cents in cash.reserved_by_class(session).items():
+            if class_id in values:
+                values[class_id] += cents
     return values
 
 
@@ -473,6 +492,35 @@ def require_institution(session: Session, institution_id: int) -> Institution:
     if institution is None:
         raise InvalidInputError("Instituição não encontrada.")
     return institution
+
+
+def require_reservable_class(session: Session, class_id: int) -> AssetClass:
+    """Categoria que pode receber dinheiro separado para comprar; senão, 422 em português.
+
+    Recusa a que não existe, a arquivada, a que só tem a reserva de emergência e a "toda mantida"
+    (todos os ativos em "manter posição"): nenhuma delas recebe compra, e o dinheiro ficaria preso.
+    """
+    asset_class = repo.get_class(session, class_id)
+    if asset_class is None:
+        raise InvalidInputError("Categoria não encontrada.")
+    if asset_class.archived:
+        raise InvalidInputError(f"A categoria {asset_class.name} está arquivada.")
+    assets = [
+        asset
+        for asset, _ in repo.list_assets_with_latest(session, include_archived=False)
+        if asset.class_id == class_id
+    ]
+    if assets and all(asset.purpose == "reserva" for asset in assets):
+        raise InvalidInputError(
+            f"{asset_class.name} é a reserva de emergência: ela não recebe dinheiro separado "
+            "para comprar."
+        )
+    if class_hold_status(session)[class_id].status == "all":
+        raise InvalidInputError(
+            f"Todos os ativos de {asset_class.name} estão em 'manter posição': a categoria "
+            "não recebe compras, então não dá para separar dinheiro para ela."
+        )
+    return asset_class
 
 
 def account_has_active_assets(session: Session, account_id: int) -> bool:
@@ -805,7 +853,11 @@ def get_summary(session: Session) -> PortfolioSummary:
                 seg[3] += proventos.get(asset.id, 0)
 
     investments_current = total_current - reserve_current
-    cash_cents = cash.consolidated_cash_cents(session)
+    today = date.today()
+    cash_cents = cash.consolidated_cash_cents(session, today)
+    # Mesma data do caixa, para o caixa livre fechar a conta: caixa = separado + livre.
+    reserved_now = cash.reserved_by_class(session, today)
+    reserved = sum(reserved_now.values())
     typed_total = sum(row[1] for row in by_type.values())
     fii_total = sum(row[1] for row in by_segment.values())
 
@@ -820,6 +872,16 @@ def get_summary(session: Session) -> PortfolioSummary:
         proventos_cents=sum(proventos.values()),
         cash_cents=cash_cents,
         total_with_cash_cents=total_current + cash_cents,
+        reserved_cents=reserved,
+        free_cash_cents=cash_cents - reserved,
+        net_worth_cents=total_current + reserved,
+        # Arquivadas inclusive: a chave nunca some, mesmo que o separado fique numa categoria
+        # arquivada depois.
+        reserved_by_class=[
+            ClassReservedAmount(class_key=c.key, reserved_cents=reserved_now[c.id])
+            for c in repo.list_classes(session, include_archived=True)
+            if reserved_now.get(c.id)
+        ],
         by_type=[
             TypeBreakdown(
                 asset_type=key,

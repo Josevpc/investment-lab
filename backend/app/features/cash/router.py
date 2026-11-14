@@ -22,6 +22,10 @@ from app.features.cash.schemas import (
     OpeningBalanceIn,
     ReconcileAdjustIn,
     ReconcileOut,
+    ReleaseIn,
+    ReservationIn,
+    ReservationResult,
+    ReservationsOut,
     StatementOut,
 )
 from app.features.portfolio import service as portfolio
@@ -140,6 +144,43 @@ def apply_reconciliation(
 ):
     """Grava o ajuste da diferença. Exige `confirm: true`."""
     return service.apply_reconciliation(session, account_id, data)
+
+
+@router.get("/accounts/{account_id}/reservations", response_model=ReservationsOut)
+def list_reservations(
+    account_id: int, include_closed: bool = False, session: Session = Depends(get_session)
+):
+    """Dinheiro separado para comprar: total, por categoria e cada separação."""
+    return service.list_reservations(session, account_id, include_closed=include_closed)
+
+
+@router.post(
+    "/accounts/{account_id}/reservations",
+    response_model=ReservationResult,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_reservation(
+    account_id: int, data: ReservationIn, session: Session = Depends(get_session)
+):
+    """Separa dinheiro do caixa para uma categoria; com `deposit`, deposita o valor junto."""
+    service.get_account(session, account_id)  # conta inexistente é 404, antes de olhar a categoria
+    portfolio.require_reservable_class(session, data.class_id)
+    return service.create_reservation(session, account_id, data)
+
+
+@router.post("/cash/reservations/{reservation_id}/release", response_model=ReservationResult)
+def release_reservation(
+    reservation_id: int, data: ReleaseIn, session: Session = Depends(get_session)
+):
+    """Devolve ao caixa livre o separado (tudo, ou `amount_cents`). A separação original fica."""
+    return service.release_reservation(session, reservation_id, data)
+
+
+@router.delete("/cash/reservations/{reservation_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_reservation(reservation_id: int, session: Session = Depends(get_session)):
+    """Só para corrigir digitação: separação com uso ou liberação não pode ser excluída."""
+    service.delete_reservation(session, reservation_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete("/cash/entries/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)

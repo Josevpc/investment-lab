@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.features.cash.domain import OPENING
-from app.features.cash.models import Account, CashEntry
+from app.features.cash.models import Account, CashEntry, CashReservation, CashReservationUse
 
 
 def list_accounts(session: Session, *, include_archived: bool = False) -> list[Account]:
@@ -108,3 +108,51 @@ def balances_by_account(session: Session, as_of: dt.date) -> dict[int, int]:
         .group_by(CashEntry.account_id)
     )
     return {account_id: int(total) for account_id, total in rows}
+
+
+# ---- dinheiro separado ---------------------------------------------------------------------
+
+
+def get_reservation(session: Session, reservation_id: int) -> CashReservation | None:
+    return session.get(CashReservation, reservation_id)
+
+
+def list_reservations(session: Session, account_id: int | None = None) -> list[CashReservation]:
+    """Separações da conta (ou de todas), da mais antiga para a mais nova: a ordem de consumo."""
+    stmt = select(CashReservation).order_by(CashReservation.date, CashReservation.id)
+    if account_id is not None:
+        stmt = stmt.where(CashReservation.account_id == account_id)
+    return list(session.scalars(stmt))
+
+
+def uses_for_movement(session: Session, movement_id: int) -> list[CashReservationUse]:
+    """Baixas de compra ligadas a um movimento da carteira."""
+    return list(
+        session.scalars(
+            select(CashReservationUse)
+            .where(CashReservationUse.movement_id == movement_id)
+            .order_by(CashReservationUse.id)
+        )
+    )
+
+
+def purchase_uses_by_movement(session: Session) -> dict[int, int]:
+    """Quanto cada movimento gastou do dinheiro separado."""
+    rows = session.execute(
+        select(CashReservationUse.movement_id, func.sum(CashReservationUse.amount_cents))
+        .where(CashReservationUse.movement_id.is_not(None))
+        .group_by(CashReservationUse.movement_id)
+    )
+    return {movement_id: int(total) for movement_id, total in rows}
+
+
+def list_reservation_uses(
+    session: Session, account_id: int | None = None
+) -> list[CashReservationUse]:
+    """Baixas (compras e liberações) das separações da conta, ou de todas."""
+    stmt = select(CashReservationUse).order_by(CashReservationUse.date, CashReservationUse.id)
+    if account_id is not None:
+        stmt = stmt.join(
+            CashReservation, CashReservation.id == CashReservationUse.reservation_id
+        ).where(CashReservation.account_id == account_id)
+    return list(session.scalars(stmt))
